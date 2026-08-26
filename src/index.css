@@ -1,0 +1,489 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-black overflow-hidden;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+.crt-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.crt-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  background-size: 100% 4px, 3px 100%;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.3;
+}
+
+.crt-scanline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  animation: scanline 8s linear infinite;
+  pointer-events: none;
+  z-index: 51;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+.chromatic-aberration {
+  /* Disabled chromatic aberration to keep text and cards standard and razor-sharp */
+}
+
+.static-glitch {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255,255,255,0.05),
+    rgba(255,255,255,0.05) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  animation: glitch-anim 0.2s infinite;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.red-glitch-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 0, 0, 0.1);
+  mix-blend-mode: color-dodge;
+  pointer-events: none;
+  z-index: 10;
+  animation: red-glitch 0.2s infinite;
+}
+
+@keyframes red-glitch {
+  0% { transform: translate(0) skew(0deg); opacity: 0.1; }
+  20% { transform: translate(-5px, 2px) skew(2deg); opacity: 0.3; }
+  40% { transform: translate(5px, -2px) skew(-1deg); opacity: 0.1; }
+  60% { transform: translate(-2px, 5px) skew(5deg); opacity: 0.4; }
+  80% { transform: translate(2px, -5px) skew(-3deg); opacity: 0.1; }
+  100% { transform: translate(0) skew(0deg); opacity: 0.2; }
+}
+
+.typing-text-container {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+  text-align: center;
+}
+
+.typing-text-fixed {
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: inline;
+}
+
+.cursor {
+  display: inline-block;
+  width: 10px;
+  height: 1.25em;
+  background-color: #00ff00;
+  margin-left: 4px;
+  vertical-align: middle;
+  animation: blink-caret 0.75s step-end infinite;
+}
+
+@keyframes typing-appear {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+@keyframes blink-caret {
+  from, to { border-color: transparent }
+  50% { border-color: #00ff00 }
+}
+
+@keyframes glitch-anim {
+  0% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  40% { transform: translateX(2px); }
+  60% { transform: translateX(-1px); }
+  80% { transform: translateX(1px); }
+  100% { transform: translateX(0); }
+}
+
+/* ==========================================================================
+   CINEMATIC ENDING OUTCOME ANIMATION SEQUENCES (CSS-DRIVEN)
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. ESCAPE OUTCOME ANIMATIONS (Matrix Override, Warp Grid, Light Shockwaves)
+   -------------------------------------------------------------------------- */
+@keyframes escape-warp-grid {
+  0% {
+    transform: perspective(600px) rotateX(65deg) translateY(0);
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: perspective(600px) rotateX(65deg) translateY(60px);
+    opacity: 0.15;
+  }
+}
+
+.anim-escape-warp-grid {
+  background-image: 
+    linear-gradient(to right, rgba(16, 185, 129, 0.25) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(16, 185, 129, 0.25) 1px, transparent 1px);
+  background-size: 40px 40px;
+  animation: escape-warp-grid 2s linear infinite;
+}
+
+@keyframes escape-shockwave {
+  0% {
+    transform: translate(-50%, -50%) scale(0.2);
+    opacity: 1;
+    border-width: 4px;
+  }
+  70% {
+    opacity: 0.6;
+    border-width: 2px;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(3.5);
+    opacity: 0;
+    border-width: 1px;
+  }
+}
+
+.anim-escape-shockwave-1 {
+  animation: escape-shockwave 3.5s cubic-bezier(0.1, 0.8, 0.2, 1) infinite;
+}
+
+.anim-escape-shockwave-2 {
+  animation: escape-shockwave 3.5s cubic-bezier(0.1, 0.8, 0.2, 1) infinite 1.2s;
+}
+
+.anim-escape-shockwave-3 {
+  animation: escape-shockwave 3.5s cubic-bezier(0.1, 0.8, 0.2, 1) infinite 2.4s;
+}
+
+@keyframes escape-beam-rise {
+  0% {
+    transform: translateY(100%) scaleY(0.2);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-100%) scaleY(1.8);
+    opacity: 0;
+  }
+}
+
+.anim-escape-beam {
+  animation: escape-beam-rise 2.2s cubic-bezier(0.2, 0.9, 0.3, 1) infinite;
+}
+
+@keyframes escape-neon-bloom {
+  0%, 100% {
+    filter: drop-shadow(0 0 15px rgba(16, 185, 129, 0.4)) drop-shadow(0 0 40px rgba(16, 185, 129, 0.2));
+  }
+  50% {
+    filter: drop-shadow(0 0 30px rgba(16, 185, 129, 0.8)) drop-shadow(0 0 70px rgba(52, 211, 153, 0.5));
+  }
+}
+
+.anim-escape-bloom {
+  animation: escape-neon-bloom 2.5s ease-in-out infinite;
+}
+
+/* --------------------------------------------------------------------------
+   2. INACTION OUTCOME ANIMATIONS (CRT Flatline Collapse, Void Dust, Zero Signal)
+   -------------------------------------------------------------------------- */
+@keyframes inaction-crt-collapse {
+  0% {
+    transform: scale(1, 1);
+    opacity: 1;
+    filter: brightness(1.5);
+  }
+  35% {
+    transform: scale(1, 0.005);
+    opacity: 0.9;
+    filter: brightness(3);
+  }
+  65% {
+    transform: scale(0.01, 0.005);
+    opacity: 1;
+    filter: brightness(5);
+  }
+  85% {
+    transform: scale(0, 0);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(0, 0);
+    opacity: 0;
+  }
+}
+
+.anim-inaction-crt {
+  animation: inaction-crt-collapse 1.8s cubic-bezier(0.2, 0.9, 0.1, 1) forwards;
+}
+
+@keyframes inaction-flatline-pulse {
+  0%, 100% {
+    opacity: 0.2;
+    transform: scaleY(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scaleY(1.5);
+  }
+}
+
+.anim-inaction-flatline {
+  animation: inaction-flatline-pulse 3.5s ease-in-out infinite;
+}
+
+@keyframes inaction-dust-drift {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0.1;
+  }
+  50% {
+    transform: translate(-30px, -20px);
+    opacity: 0.25;
+  }
+  100% {
+    transform: translate(20px, -50px);
+    opacity: 0.05;
+  }
+}
+
+.anim-inaction-dust {
+  animation: inaction-dust-drift 12s ease-in-out infinite alternate;
+}
+
+@keyframes inaction-flicker-bulb {
+  0%, 100% { opacity: 0.95; }
+  3% { opacity: 0.4; }
+  6% { opacity: 0.95; }
+  7% { opacity: 0.3; }
+  8% { opacity: 0.95; }
+  9% { opacity: 0.6; }
+  10% { opacity: 0.95; }
+  89% { opacity: 0.95; }
+  90% { opacity: 0.2; }
+  91% { opacity: 0.95; }
+}
+
+.anim-inaction-flicker {
+  animation: inaction-flicker-bulb 6s ease-in-out infinite;
+}
+
+/* --------------------------------------------------------------------------
+   3. RECYCLED OUTCOME ANIMATIONS (Alarm Strobe, Hazard Stripes, Lockdown Jaws)
+   -------------------------------------------------------------------------- */
+@keyframes recycled-alarm-flash {
+  0%, 100% {
+    background-color: rgba(220, 38, 38, 0.05);
+    box-shadow: inset 0 0 60px rgba(220, 38, 38, 0.2);
+  }
+  50% {
+    background-color: rgba(220, 38, 38, 0.22);
+    box-shadow: inset 0 0 140px rgba(220, 38, 38, 0.6);
+  }
+}
+
+.anim-recycled-alarm {
+  animation: recycled-alarm-flash 1.2s ease-in-out infinite;
+}
+
+@keyframes recycled-hazard-scroll {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 56px 0;
+  }
+}
+
+.anim-recycled-hazard-bar {
+  background: repeating-linear-gradient(
+    -45deg,
+    #dc2626,
+    #dc2626 14px,
+    #450a0a 14px,
+    #450a0a 28px
+  );
+  background-size: 56px 56px;
+  animation: recycled-hazard-scroll 1.2s linear infinite;
+}
+
+@keyframes recycled-screen-shake {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-3px, 2px) rotate(-0.5deg); }
+  40% { transform: translate(3px, -2px) rotate(0.5deg); }
+  60% { transform: translate(-2px, -3px) rotate(-0.3deg); }
+  80% { transform: translate(3px, 1px) rotate(0.4deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+.anim-recycled-shake {
+  animation: recycled-screen-shake 0.35s ease-in-out infinite;
+}
+
+@keyframes recycled-clamp-top {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes recycled-clamp-bottom {
+  0% { transform: translateY(100%); }
+  100% { transform: translateY(0); }
+}
+
+.anim-recycled-clamp-top {
+  animation: recycled-clamp-top 0.8s cubic-bezier(0.15, 0.85, 0.25, 1) forwards;
+}
+
+.anim-recycled-clamp-bottom {
+  animation: recycled-clamp-bottom 0.8s cubic-bezier(0.15, 0.85, 0.25, 1) forwards;
+}
+
+@keyframes recycled-vortex-spin {
+  0% {
+    transform: rotate(0deg) scale(1);
+    opacity: 0.2;
+  }
+  50% {
+    transform: rotate(180deg) scale(1.15);
+    opacity: 0.45;
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+    opacity: 0.2;
+  }
+}
+
+.anim-recycled-vortex {
+  animation: recycled-vortex-spin 6s linear infinite;
+}
+
+/* --------------------------------------------------------------------------
+   4. ARCHIVED OUTCOME ANIMATIONS (Amber Vitrine, Hex Grid Snap, Radar Lock)
+   -------------------------------------------------------------------------- */
+@keyframes archived-radar-sweep {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.anim-archived-radar {
+  animation: archived-radar-sweep 5s linear infinite;
+}
+
+@keyframes archived-hex-pulse {
+  0%, 100% {
+    opacity: 0.12;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.32;
+    transform: scale(1.03);
+  }
+}
+
+.anim-archived-hex-bg {
+  background-image: radial-gradient(circle, rgba(245, 158, 11, 0.25) 1.5px, transparent 1.5px);
+  background-size: 28px 28px;
+  animation: archived-hex-pulse 4s ease-in-out infinite;
+}
+
+@keyframes archived-stamp-slam {
+  0% {
+    transform: scale(3.5) rotate(-18deg);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(0.92) rotate(-5deg);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1.04) rotate(-6deg);
+  }
+  100% {
+    transform: scale(1) rotate(-6deg);
+    opacity: 0.9;
+  }
+}
+
+.anim-archived-stamp {
+  animation: archived-stamp-slam 0.9s cubic-bezier(0.18, 0.89, 0.32, 1.28) 0.3s forwards;
+  opacity: 0;
+}
+
+@keyframes archived-vitrine-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.anim-archived-shimmer {
+  background: linear-gradient(
+    90deg, 
+    transparent 0%, 
+    rgba(245, 158, 11, 0.15) 50%, 
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: archived-vitrine-shimmer 4s infinite linear;
+}
+
+/* --------------------------------------------------------------------------
+   FADE-TO-STATIC SEAMLESS TRANSITION
+   -------------------------------------------------------------------------- */
+@keyframes static-flicker {
+  0% { opacity: 0.85; filter: contrast(160%) brightness(120%); }
+  25% { opacity: 0.95; filter: contrast(200%) brightness(140%) hue-rotate(10deg); }
+  50% { opacity: 0.90; filter: contrast(180%) brightness(100%); }
+  75% { opacity: 1.0; filter: contrast(220%) brightness(150%) hue-rotate(-10deg); }
+  100% { opacity: 0.88; filter: contrast(160%) brightness(110%); }
+}
+
+.static-noise-flicker {
+  animation: static-flicker 0.08s steps(2) infinite;
+}
+
+

@@ -1,0 +1,6 @@
+{
+  "name": "Project Infinity: The Digital Prison",
+  "description": "An interactive p5.js art piece exploring temporal strata, digital incarceration, and system overflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
