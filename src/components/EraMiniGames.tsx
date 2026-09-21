@@ -305,7 +305,7 @@ export const EraMiniGameModal: React.FC<MiniGameModalProps> = ({
   }, [milestoneYear, milestoneTitle]);
 
   useEffect(() => {
-    if (gameState !== 'playing') return;
+    if (gameState !== 'playing' || usesEnvironmentalPressure) return;
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
@@ -385,13 +385,23 @@ export const EraMiniGameModal: React.FC<MiniGameModalProps> = ({
 
         {/* Center Countdown Timer Gauge */}
         <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 rounded-lg bg-black/60 border border-white/15 shrink-0">
-          <Timer className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${timeLeft <= 15 ? 'text-red-400 animate-pulse' : 'text-zinc-400'}`} />
-          <span className="text-[10px] text-zinc-400 font-bold uppercase hidden md:inline">SYSTEM TIMEOUT:</span>
-          <span className={`text-xs sm:text-sm md:text-base font-black font-mono tracking-widest ${
-            timeLeft <= 15 ? 'text-red-400 animate-ping' : timeLeft <= 30 ? 'text-amber-400' : 'text-zinc-100'
-          }`}>
-            00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}
-          </span>
+          {usesEnvironmentalPressure ? (
+            <>
+              <Activity className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 animate-pulse" />
+              <span className="text-[10px] text-zinc-400 font-bold uppercase hidden md:inline">PRESSURE MODEL:</span>
+              <span className="text-[10px] sm:text-xs font-black font-mono tracking-widest text-amber-300">ENVIRONMENTAL</span>
+            </>
+          ) : (
+            <>
+              <Timer className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${timeLeft <= 15 ? 'text-red-400 animate-pulse' : 'text-zinc-400'}`} />
+              <span className="text-[10px] text-zinc-400 font-bold uppercase hidden md:inline">SYSTEM TIMEOUT:</span>
+              <span className={`text-xs sm:text-sm md:text-base font-black font-mono tracking-widest ${
+                timeLeft <= 15 ? 'text-red-400 animate-pulse' : timeLeft <= 30 ? 'text-amber-400' : 'text-zinc-100'
+              }`}>
+                00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}
+              </span>
+            </>
+          )}
         </div>
 
         {/* Right Controls (Hint, Audio, Close) */}
@@ -512,157 +522,229 @@ export const EraMiniGameModal: React.FC<MiniGameModalProps> = ({
    1945 ENIAC: Futuristic High-Voltage Logic Accumulator & Relay Bus
    ========================================================================= */
 const ENIACGame: React.FC<{ onWin: () => void; onLoss: () => void; showHint: boolean }> = ({ onWin, onLoss, showHint }) => {
-  const TUBE_WEIGHTS = [64, 32, 16, 8, 4, 2];
-  
-  // Random target load
-  const targetSum = useMemo(() => {
-    const targets = [86, 78, 102, 54, 98, 114];
-    return targets[Math.floor(Math.random() * targets.length)];
-  }, []);
+  const MODULES = [
+    { id: 'A', label: 'ACCUM-A', charge: 64, slot: 0 },
+    { id: 'B', label: 'ACCUM-B', charge: 16, slot: 1 },
+    { id: 'C', label: 'ACCUM-C', charge: 4, slot: 2 }
+  ];
 
-  const [switches, setSwitches] = useState<boolean[]>([false, false, false, false, false, false]);
-  const [gateMode, setGateMode] = useState<'DIRECT' | 'INVERT'>('DIRECT');
-  const [tries, setTries] = useState(3);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const slotRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const completedRef = useRef(false);
+  const [installed, setInstalled] = useState<string[]>([]);
+  const [activeModule, setActiveModule] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState('CORE BUS OFFLINE // RESTORE THREE ACCUMULATOR MODULES');
+  const [heat, setHeat] = useState(24);
+  const [surge, setSurge] = useState(false);
 
-  const rawSum = switches.reduce((acc, on, idx) => acc + (on ? TUBE_WEIGHTS[idx] : 0), 0);
-  const currentSum = gateMode === 'DIRECT' ? rawSum : Math.max(0, 126 - rawSum);
+  useEffect(() => {
+    if (completedRef.current) return;
+    const interval = window.setInterval(() => {
+      setHeat((prev) => {
+        const next = Math.min(100, prev + 1.25);
+        if (next >= 100 && !completedRef.current) {
+          completedRef.current = true;
+          window.setTimeout(onLoss, 250);
+        }
+        return next;
+      });
+    }, 900);
+    return () => window.clearInterval(interval);
+  }, [onLoss]);
 
-  const toggleSwitch = (idx: number) => {
-    sfx.playClick();
-    const next = [...switches];
-    next[idx] = !next[idx];
-    setSwitches(next);
-  };
+  const handleDrop = (moduleId: string, point: { x: number; y: number }) => {
+    const module = MODULES.find((item) => item.id === moduleId);
+    if (!module || completedRef.current) return;
 
-  const handleVerify = () => {
-    if (currentSum === targetSum) {
-      setFeedback('ACCUMULATOR VOLTAGE CALIBRATION LOCKED ✓');
-      onWin();
-    } else {
+    const target = slotRefs.current[module.slot];
+    const rect = target?.getBoundingClientRect();
+    const padding = 34;
+    const inside = !!rect &&
+      point.x >= rect.left - padding &&
+      point.x <= rect.right + padding &&
+      point.y >= rect.top - padding &&
+      point.y <= rect.bottom + padding;
+
+    setActiveModule(null);
+
+    if (!inside) {
       sfx.playError();
-      const nextTries = tries - 1;
-      setTries(nextTries);
-      if (nextTries <= 0) {
-        setFeedback('CIRCUIT SHORT — ACCUMULATOR OVERLOAD');
-        onLoss();
-      } else {
-        const diff = targetSum - currentSum;
-        const hint = diff > 0 ? `DEFICIT: -${diff}V` : `OVERVOLTAGE: +${Math.abs(diff)}V`;
-        setFeedback(`VOLTAGE ERROR (${hint}). VACUUM RELAYS PURGED. ${nextTries} ATTEMPTS REMAINING.`);
-        setSwitches([false, false, false, false, false, false]);
-      }
+      setHeat((prev) => Math.min(100, prev + 10));
+      setSurge(true);
+      setFeedback(`${module.label} REJECTED // ALIGN WITH ITS ACTIVE SOCKET`);
+      window.setTimeout(() => setSurge(false), 360);
+      return;
+    }
+
+    sfx.playLaser();
+    const nextInstalled = [...installed, moduleId];
+    setInstalled(nextInstalled);
+    setHeat((prev) => Math.max(10, prev - 12));
+    setFeedback(`${module.label} MAGNETIC LOCK CONFIRMED // BUS ${nextInstalled.length}/3 ONLINE`);
+
+    if (nextInstalled.length === MODULES.length) {
+      completedRef.current = true;
+      setSurge(true);
+      setFeedback('ACCUMULATOR CORE SYNCHRONISED // ERA KEY EXTRACTING');
+      window.setTimeout(() => {
+        sfx.playSuccess();
+        onWin();
+      }, 900);
     }
   };
 
+  const thermalTone =
+    heat > 78 ? 'text-red-300 border-red-500/70 bg-red-950/40' :
+    heat > 52 ? 'text-amber-300 border-amber-500/60 bg-amber-950/30' :
+    'text-emerald-300 border-emerald-500/50 bg-emerald-950/20';
+
   return (
-    <div className="flex-1 flex flex-col justify-between space-y-4">
-      {/* Tactical Top Info Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-xl bg-amber-950/30 border border-amber-600/50">
-        <div className="text-left">
-          <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">TARGET ACCUMULATOR LOAD</span>
-          <span className="text-2xl md:text-3xl font-black text-amber-300 font-mono tracking-widest">{targetSum} VOLTS</span>
-        </div>
-
-        <div className="text-left md:text-center">
-          <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">CURRENT BUS OUTPUT</span>
-          <span className={`text-2xl md:text-3xl font-black font-mono tracking-widest ${
-            currentSum === targetSum ? 'text-emerald-400' : 'text-amber-200'
-          }`}>
-            {currentSum} VOLTS
-          </span>
-        </div>
-
-        <div className="text-left md:text-right flex flex-col justify-between">
-          <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">LOGIC INVERTER BUS</span>
-          <div className="flex items-center md:justify-end gap-2 mt-1">
-            <button
-              onClick={() => { sfx.playClick(); setGateMode('DIRECT'); }}
-              className={`px-2.5 py-1 rounded text-[10px] font-bold border cursor-pointer ${
-                gateMode === 'DIRECT' ? 'bg-amber-600 text-black border-amber-400' : 'bg-black/50 text-zinc-400 border-zinc-700'
-              }`}
-            >
-              PASS-THRU
-            </button>
-            <button
-              onClick={() => { sfx.playClick(); setGateMode('INVERT'); }}
-              className={`px-2.5 py-1 rounded text-[10px] font-bold border cursor-pointer ${
-                gateMode === 'INVERT' ? 'bg-amber-600 text-black border-amber-400' : 'bg-black/50 text-zinc-400 border-zinc-700'
-              }`}
-            >
-              INVERT (126-X)
-            </button>
+    <div className="flex-1 min-h-0 flex flex-col gap-3 md:gap-4">
+      <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+        <div className="text-left min-w-0">
+          <div className="text-[10px] sm:text-xs tracking-[0.22em] font-black text-amber-300 uppercase">
+            ENIAC // ACCUMULATOR CHAMBER
           </div>
+          <div className="text-[10px] sm:text-xs text-zinc-400 mt-1">
+            Rebuild the physical memory bus. Drag each glowing module into its matching socket.
+          </div>
+        </div>
+        <div className={`px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-black tracking-wider ${thermalTone}`}>
+          THERMAL {Math.round(heat)}%
         </div>
       </div>
 
       {showHint && (
-        <div className="p-2.5 rounded-lg bg-amber-950/60 border border-amber-500/80 text-xs text-amber-300 text-left flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-          <span>TACTICAL SCAN: Accumulator charging requires binary capacitor bank summation. Balance direct vs inverter buses.</span>
-        </div>
-      )}
-
-      {/* 6 Large Vacuum Capacitors */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-3 flex-1 items-center">
-        {switches.map((isOn, idx) => {
-          const weight = TUBE_WEIGHTS[idx];
-          return (
-            <button
-              key={idx}
-              onClick={() => toggleSwitch(idx)}
-              className={`h-40 md:h-52 rounded-xl border-2 flex flex-col items-center justify-between p-3 transition-all cursor-pointer ${
-                isOn 
-                  ? 'bg-amber-950/70 border-amber-400 text-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.3)] scale-[1.02]' 
-                  : 'bg-[#150a02] border-amber-900/60 text-zinc-500 hover:border-amber-700'
-              }`}
-            >
-              <div className="flex items-center justify-between w-full text-[10px] font-bold text-amber-400">
-                <span>BANK #{idx + 1}</span>
-                <span className="px-1.5 py-0.5 rounded bg-black/60 border border-amber-800">+{weight}V</span>
-              </div>
-
-              {/* Glowing High Voltage Vacuum Tube Visual */}
-              <div className={`w-10 h-24 md:h-32 rounded-t-full rounded-b-lg border-2 flex flex-col items-center justify-end p-1.5 transition-all ${
-                isOn 
-                  ? 'bg-gradient-to-t from-amber-600/40 via-amber-400/20 to-transparent border-amber-400 shadow-[0_0_15px_#f59e0b]' 
-                  : 'bg-black/80 border-zinc-700'
-              }`}>
-                {/* Internal Ion Filament */}
-                <div className={`w-2.5 rounded-full transition-all ${
-                  isOn 
-                    ? 'h-16 md:h-20 bg-gradient-to-t from-amber-300 to-amber-100 shadow-[0_0_10px_#fbbf24]' 
-                    : 'h-8 bg-zinc-700'
-                }`} />
-                <div className="w-6 h-2 bg-zinc-700 mt-1.5 rounded-sm border border-zinc-600" />
-              </div>
-
-              <span className={`text-[10px] font-black uppercase tracking-wider ${isOn ? 'text-amber-300' : 'text-zinc-600'}`}>
-                {isOn ? 'ENERGIZED' : 'STANDBY'}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {feedback && (
-        <div className="text-xs font-bold text-amber-300 bg-amber-950/80 p-2.5 rounded-lg border border-amber-600">
-          {feedback}
-        </div>
-      )}
-
-      {/* Action Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-amber-900/60">
-        <span className="text-xs text-red-400 font-bold">
-          SECURITY TOLERANCE: <strong className="text-zinc-200 bg-black/60 px-2 py-1 rounded border border-zinc-700">{tries} / 3 ATTEMPTS</strong>
-        </span>
-        <button
-          onClick={handleVerify}
-          className="px-6 md:px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest bg-amber-500 hover:bg-amber-400 text-black transition-all cursor-pointer shadow-[0_0_15px_rgba(245,158,11,0.4)]"
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="px-3 py-2 rounded-lg bg-amber-950/50 border border-amber-500/70 text-[11px] text-amber-200 flex items-center gap-2"
         >
-          ENERGIZE ACCUMULATOR BUS
-        </button>
+          <Radar className="w-4 h-4 shrink-0" />
+          <span>TACTICAL SCAN: socket geometry and charge markings correspond. Move close enough and the prison's magnetic bus will finish the alignment.</span>
+        </motion.div>
+      )}
+
+      <div className="relative flex-1 min-h-[360px] sm:min-h-[410px] rounded-2xl overflow-hidden border border-amber-900/70 bg-[#090603]">
+        <motion.div
+          className="absolute inset-0 pointer-events-none"
+          animate={{ opacity: surge ? [0.18, 0.75, 0.14] : [0.16, 0.28, 0.16] }}
+          transition={{ duration: surge ? 0.35 : 3.2, repeat: surge ? 0 : Infinity }}
+          style={{
+            background:
+              'radial-gradient(circle at 50% 42%, rgba(245,158,11,0.20), transparent 34%), linear-gradient(to bottom, rgba(120,53,15,0.12), transparent 55%)'
+          }}
+        />
+
+        <div className="absolute inset-x-0 top-0 h-28 pointer-events-none opacity-50 bg-[linear-gradient(to_bottom,rgba(245,158,11,0.12),transparent)]" />
+
+        <div className="absolute left-3 right-3 sm:left-6 sm:right-6 top-3 sm:top-5 flex items-center gap-2">
+          <Activity className={`w-3.5 h-3.5 ${heat > 78 ? 'text-red-400 animate-pulse' : 'text-amber-400'}`} />
+          <div className="h-1.5 flex-1 rounded-full bg-black/70 border border-amber-950 overflow-hidden">
+            <motion.div
+              className={`h-full ${heat > 78 ? 'bg-red-500' : heat > 52 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+              animate={{ width: `${heat}%` }}
+              transition={{ type: 'spring', stiffness: 120, damping: 20 }}
+            />
+          </div>
+        </div>
+
+        <div className="absolute inset-x-3 sm:inset-x-6 top-12 sm:top-16 bottom-[150px] sm:bottom-[165px] grid grid-cols-3 gap-2 sm:gap-5">
+          {MODULES.map((module, idx) => {
+            const isInstalled = installed.includes(module.id);
+            const isActive = activeModule === module.id;
+            return (
+              <div
+                key={module.id}
+                ref={(node) => { slotRefs.current[idx] = node; }}
+                className={`relative rounded-xl border-2 flex items-center justify-center overflow-hidden transition-all duration-300 ${
+                  isInstalled
+                    ? 'border-emerald-400/90 bg-emerald-950/30 shadow-[inset_0_0_35px_rgba(16,185,129,0.18),0_0_25px_rgba(16,185,129,0.22)]'
+                    : isActive
+                      ? 'border-amber-300 bg-amber-950/30 shadow-[0_0_35px_rgba(245,158,11,0.28)]'
+                      : 'border-amber-900/60 bg-black/35'
+                }`}
+              >
+                <div className="absolute inset-2 sm:inset-3 rounded-lg border border-dashed border-amber-700/40" />
+                <div className="absolute top-2 left-2 text-[9px] sm:text-[10px] font-black text-amber-500/80 tracking-wider">
+                  SOCKET {idx + 1}
+                </div>
+                <div className="absolute bottom-2 right-2 text-[9px] font-bold text-zinc-600">
+                  +{module.charge}V
+                </div>
+
+                {isInstalled ? (
+                  <motion.div
+                    initial={{ scale: 1.24, opacity: 0, rotate: -4 }}
+                    animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                    transition={{ type: 'spring', stiffness: 240, damping: 17 }}
+                    className="relative z-10 w-[68%] max-w-[120px] h-[68%] rounded-xl border-2 border-emerald-300 bg-gradient-to-b from-emerald-400/30 via-amber-400/20 to-black shadow-[0_0_26px_rgba(16,185,129,0.45)] flex flex-col items-center justify-center"
+                  >
+                    <Zap className="w-6 h-6 sm:w-8 sm:h-8 text-amber-300" />
+                    <span className="mt-2 text-[9px] sm:text-[10px] font-black text-emerald-200 tracking-widest">{module.label}</span>
+                    <span className="text-[9px] text-zinc-300">LOCKED</span>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    className="w-3 h-3 rounded-full bg-amber-400 shadow-[0_0_20px_#f59e0b]"
+                    animate={{ scale: [1, 1.5, 1], opacity: [0.45, 1, 0.45] }}
+                    transition={{ duration: 1.8 + idx * 0.2, repeat: Infinity }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="absolute left-2 right-2 sm:left-5 sm:right-5 bottom-3 sm:bottom-5 h-[128px] sm:h-[138px] rounded-xl border border-amber-900/70 bg-black/55 backdrop-blur-sm px-2 sm:px-4 py-3">
+          <div className="text-[9px] sm:text-[10px] text-zinc-500 uppercase font-black tracking-[0.18em] mb-2">
+            Ejected accumulator modules // drag to restore bus
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:gap-4 h-[86px] sm:h-[94px]">
+            {MODULES.map((module) => {
+              const isInstalled = installed.includes(module.id);
+              if (isInstalled) {
+                return (
+                  <div key={module.id} className="rounded-lg border border-emerald-900/50 bg-emerald-950/10 flex items-center justify-center text-[9px] text-emerald-700 font-black">
+                    INSTALLED
+                  </div>
+                );
+              }
+
+              return (
+                <motion.button
+                  key={module.id}
+                  drag
+                  dragSnapToOrigin
+                  dragElastic={0.08}
+                  whileDrag={{ scale: 1.08, rotate: -1, zIndex: 50 }}
+                  whileTap={{ scale: 1.02 }}
+                  onDragStart={() => {
+                    sfx.playClick();
+                    setActiveModule(module.id);
+                    setFeedback(`${module.label} DETACHED // SEEKING MAGNETIC SOCKET`);
+                  }}
+                  onDragEnd={(_, info) => handleDrop(module.id, info.point)}
+                  className="touch-none relative rounded-xl border-2 border-amber-500/70 bg-gradient-to-b from-amber-400/20 via-amber-900/20 to-black shadow-[0_0_18px_rgba(245,158,11,0.16)] flex flex-col items-center justify-center cursor-grab active:cursor-grabbing select-none"
+                  aria-label={`Drag ${module.label} to socket ${module.slot + 1}`}
+                >
+                  <div className="absolute inset-1.5 rounded-lg border border-amber-300/15" />
+                  <div className="w-5 h-8 sm:w-6 sm:h-10 rounded-t-full rounded-b-md border border-amber-300/70 bg-gradient-to-t from-amber-500/50 to-transparent shadow-[0_0_13px_rgba(245,158,11,0.45)]" />
+                  <span className="mt-1 text-[9px] sm:text-[10px] font-black text-amber-200 tracking-wider">{module.label}</span>
+                  <span className="text-[8px] sm:text-[9px] text-zinc-500">+{module.charge}V</span>
+                </motion.button>
+              );
+            })}
+          </div>
+        </div>
       </div>
+
+      <motion.div
+        animate={surge ? { x: [0, -3, 3, -2, 2, 0] } : { x: 0 }}
+        className="min-h-[38px] px-3 py-2 rounded-lg border border-amber-900/70 bg-black/45 flex items-center gap-2 text-[10px] sm:text-xs font-bold text-amber-200"
+      >
+        <Radio className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+        <span className="truncate sm:whitespace-normal">{feedback}</span>
+      </motion.div>
     </div>
   );
 };
