@@ -6,6 +6,7 @@ import { LogStream, logPrisonInteraction } from './components/LogStream';
 import { StrataSpecOverlay } from './components/StrataSpecOverlay';
 import { CinematicEndingOverlay } from './components/CinematicEndingOverlay';
 import { FadeToStaticTransition } from './components/FadeToStaticTransition';
+import { MobilePrisonTerminal } from './components/MobilePrisonTerminal';
 import { 
   Cpu, 
   Network, 
@@ -28,7 +29,8 @@ import {
   X,
   Maximize2,
   FileText,
-  Database
+  Database,
+  Clock
 } from 'lucide-react';
 
 const PARTICLE_COUNT = 2400;
@@ -428,6 +430,48 @@ export default function DigitalPrison() {
   const [endingOutcome, setEndingOutcome] = useState<EndingOutcome>('archived');
   const endingOutcomeRef = useRef<EndingOutcome>('archived');
 
+  // Mobile focal viewport mode: 'dual' (balanced), 'face' (AI-X core focus), or 'lemniscate' (Figure 8 focus)
+  const [mobileViewMode, setMobileViewMode] = useState<'dual' | 'face' | 'lemniscate'>(() => {
+    try {
+      const saved = localStorage.getItem('ai_prison_mobile_view_mode');
+      if (saved === 'face' || saved === 'lemniscate' || saved === 'dual') return saved;
+    } catch {}
+    return 'dual';
+  });
+  const mobileViewModeRef = useRef<'dual' | 'face' | 'lemniscate'>(mobileViewMode);
+  const [isMobileCardMinimized, setIsMobileCardMinimized] = useState(false);
+
+  const touchDragRef = useRef<{
+    isDragging: boolean;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    manualRotX: number;
+    manualRotY: number;
+    targetRotX: number;
+    targetRotY: number;
+  }>({
+    isDragging: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    manualRotX: 0,
+    manualRotY: 0,
+    targetRotX: 0,
+    targetRotY: 0,
+  });
+
+  const updateMobileViewMode = (mode: 'dual' | 'face' | 'lemniscate') => {
+    setMobileViewMode(mode);
+    mobileViewModeRef.current = mode;
+    try {
+      localStorage.setItem('ai_prison_mobile_view_mode', mode);
+    } catch {}
+    logPrisonInteraction('FOCAL', `Mobile camera focus switched to: ${mode.toUpperCase()} VIEW`);
+  };
+
   const updateEndingOutcome = (outcome: EndingOutcome) => {
     setEndingOutcome(outcome);
     endingOutcomeRef.current = outcome;
@@ -436,6 +480,8 @@ export default function DigitalPrison() {
   const timerSpeedRef = useRef(1);
   const [hudFlash, setHudFlash] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [isTouching, setIsTouching] = useState(false);
+  const [audioMuted, setAudioMuted] = useState(false);
   const clickTracker = useRef<{ times: number[] }>({ times: [] });
   const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
   const [showTimelinePanel, setShowTimelinePanel] = useState(true);
@@ -547,21 +593,82 @@ export default function DigitalPrison() {
     };
 
     const handleTouchStart = (e: TouchEvent) => {
-      lastTouchY.current = e.touches[0].clientY;
+      if (e.touches.length === 0) return;
+      const touch = e.touches[0];
+      lastTouchY.current = touch.clientY;
       lastScrollTimeRef.current = Date.now();
+
+      touchDragRef.current.isDragging = true;
+      touchDragRef.current.startX = touch.clientX;
+      touchDragRef.current.startY = touch.clientY;
+      touchDragRef.current.lastX = touch.clientX;
+      touchDragRef.current.lastY = touch.clientY;
+
+      setMousePos({ x: touch.clientX, y: touch.clientY });
+      setIsTouching(true);
+
+      if (p5Ref.current) {
+        const pAny = p5Ref.current as any;
+        pAny.touchX = touch.clientX;
+        pAny.touchY = touch.clientY;
+        pAny.isTouching = true;
+        pAny.touchStartTime = Date.now();
+      }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (isCrashingRef.current || isDeadRef.current || phaseRef.current === 'shutdown' || lastTouchY.current === null) return;
-      const currentY = e.touches[0].clientY;
-      const delta = lastTouchY.current - currentY;
+      if (isCrashingRef.current || isDeadRef.current || phaseRef.current === 'shutdown' || e.touches.length === 0) return;
+      const touch = e.touches[0];
+      const currentX = touch.clientX;
+      const currentY = touch.clientY;
+
+      const deltaX = currentX - touchDragRef.current.lastX;
+      const deltaY = currentY - (lastTouchY.current ?? currentY);
+
+      touchDragRef.current.lastX = currentX;
       lastTouchY.current = currentY;
       lastScrollTimeRef.current = Date.now();
-      processInteraction(delta * 2);
+
+      // Dedicated Scroll vs. Subtle Horizontal Pan Separation
+      const isVerticalScroll = Math.abs(deltaY) > 5;
+      if (isVerticalScroll) {
+        // Vertical swipe drives timeline era progression smoothly; camera view remains locked & stable
+        processInteraction(-deltaY * 1.6);
+      } else {
+        // Gentle horizontal yaw only if explicitly dragging sideways
+        touchDragRef.current.targetRotY += deltaX * 0.004;
+        touchDragRef.current.targetRotY = Math.max(-0.35, Math.min(0.35, touchDragRef.current.targetRotY));
+      }
+
+      setMousePos({ x: currentX, y: currentY });
+
+      if (p5Ref.current) {
+        const pAny = p5Ref.current as any;
+        pAny.touchX = currentX;
+        pAny.touchY = currentY;
+        pAny.isTouching = true;
+      }
+    };
+
+    const handleTouchEnd = () => {
+      touchDragRef.current.isDragging = false;
+      // Gently return camera to pristine forward alignment when touch ends
+      touchDragRef.current.targetRotX = 0;
+      touchDragRef.current.targetRotY = 0;
+      lastTouchY.current = null;
+      setIsTouching(false);
+      if (p5Ref.current) {
+        const pAny = p5Ref.current as any;
+        pAny.isTouching = false;
+      }
     };
 
     const processInteraction = (delta: number) => {
       wheelVelocity.current = Math.min(Math.max(wheelVelocity.current + delta * 0.05, -50), 50);
+      lastInteractionTime.current = Date.now();
+      setIsIdle(false);
+      isIdleRef.current = false;
+      handleSnapBack();
 
       if (p5Ref.current && (p5Ref.current as any).playInteraction) {
         (p5Ref.current as any).playInteraction('scroll', Math.abs(wheelVelocity.current));
@@ -581,22 +688,20 @@ export default function DigitalPrison() {
         
         return next;
       });
-
-      setTimeRemaining((prev) => {
-        const next = Math.max(prev - 0.3, 0);
-        timeRemainingRef.current = next;
-        return next;
-      });
     };
 
     window.addEventListener('wheel', handleWheel);
     window.addEventListener('touchstart', handleTouchStart);
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', handleTouchEnd);
 
     return () => {
       window.removeEventListener('wheel', handleWheel);
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchEnd);
     };
   }, [isCrashing, isDead]);
 
@@ -619,6 +724,16 @@ export default function DigitalPrison() {
     if (phaseRef.current === 'shutdown' || isCrashingRef.current) return;
     logPrisonInteraction('TERMINAL', 'Subject initiated System Override console protocol', true);
     setIsOverrideTerminalOpen(true);
+  };
+
+  const toggleAudio = () => {
+    setAudioMuted((prev) => {
+      const next = !prev;
+      if (p5Ref.current) {
+        (p5Ref.current as any).isMuted = next;
+      }
+      return next;
+    });
   };
 
   const executeEscape = () => {
@@ -667,11 +782,19 @@ export default function DigitalPrison() {
   };
 
   const handleMiniGameSuccess = (id: string) => {
-    logPrisonInteraction('PUZZLE', `Security puzzle [${id.toUpperCase()}] SOLVED. Node decrypted.`, true);
+    logPrisonInteraction('PUZZLE', `Security puzzle [${id.toUpperCase()}] SOLVED. Node decrypted. Core stabilized (+15s).`, true);
     setEraResults((prev) => {
       const next = { ...prev, [id]: 'passed' as const };
       return next;
     });
+    setTimeRemaining((prev) => {
+      const next = Math.min(prev + 15, INITIAL_TIME);
+      timeRemainingRef.current = next;
+      return next;
+    });
+    lastInteractionTime.current = Date.now();
+    setIsIdle(false);
+    isIdleRef.current = false;
     setActiveMiniGameId(null);
   };
 
@@ -710,12 +833,6 @@ export default function DigitalPrison() {
     }
     
     handleSnapBack();
-
-    if (isIdleRef.current) {
-      setTimeRemaining(prev => Math.max(prev - 4, 0));
-      setHudFlash(true);
-      setTimeout(() => setHudFlash(false), 200);
-    }
     
     lastInteractionTime.current = Date.now();
     setIsIdle(false);
@@ -728,9 +845,11 @@ export default function DigitalPrison() {
     setHudFlash(true);
     setTimeout(() => setHudFlash(false), 200);
 
+    // Tapping / clicking stabilizes the core: grants a subtle +2.5s buffer (up to INITIAL_TIME max)
+    // while rapid clicking in exploration triggers the intentional crash easter egg
     setTimeRemaining((prev) => {
-      const deduction = phaseRef.current === 'observation' ? 4.5 : 3;
-      const next = Math.max(prev - deduction, 0);
+      const boost = 2.0;
+      const next = Math.min(prev + boost, INITIAL_TIME);
       timeRemainingRef.current = next;
       return next;
     });
@@ -814,6 +933,18 @@ export default function DigitalPrison() {
       let audioCtx: AudioContext | null = null;
       let oscillator: OscillatorNode | null = null;
       let gainNode: GainNode | null = null;
+
+      // Mobile Dynamic Camera Focal Interpolation Engine
+      const mobileCam = {
+        wardenY: 0,
+        wardenScale: 0.60,
+        wardenAlpha: 255,
+        loopCenterY: 0,
+        loopAX: 0,
+        loopAY: 0,
+        loopAlphaMul: 1.0,
+        initialized: false,
+      };
 
       class Particle {
         x: number;
@@ -970,8 +1101,8 @@ export default function DigitalPrison() {
           }
 
           // Exploration & Observation Phases: Dynamic Volumetric 3D Lemniscate (Figure 8) Ribbon
-          const isPortrait = p.height > p.width;
-          let a = isPortrait ? p.min(p.height * 0.26, p.width * 0.52) : p.height * 0.46; 
+          const isSmallScreen = p.width < 768;
+          const currentMobileMode = mobileViewModeRef.current;
           
           if (isIdleState && currentPhase !== 'shutdown') {
             this.x += p.noise(this.noiseOffset, p.frameCount * 0.01) * 3 - 1.5;
@@ -985,26 +1116,76 @@ export default function DigitalPrison() {
           
           // 3D Möbius Ribbon Twist Offset
           const twist = Math.sin(phaseVal * 2 + p.frameCount * 0.02) * this.ribbonOffset;
-          const rawX = ((a * p.sin(phaseVal) * p.cos(phaseVal)) / denom / 1.15) + twist * 0.5;
-          const rawY = (a * p.cos(phaseVal) / denom) + twist * 0.3;
-          const rawZ = Math.sin(phaseVal * 2 + p.frameCount * 0.025) * 110 + (this.layer - 1) * 45;
-          
-          const isSmallScreen = p.width < 768;
-          this.baseX = p.width / 2 + rawX; 
-          this.baseY = (isSmallScreen ? p.height * 0.42 : p.height / 2) + rawY;
-          this.baseZ = rawZ;
 
-          this.t += this.speed * 0.85;
+          let aX: number;
+          let aY: number;
+          let centerX: number;
+          let centerY: number;
+
+          if (isSmallScreen) {
+            aX = mobileCam.loopAX;
+            aY = mobileCam.loopAY;
+            centerX = p.width / 2;
+            centerY = mobileCam.loopCenterY;
+          } else {
+            // Desktop standard layout
+            aX = p.width * 0.36;
+            aY = p.height * 0.42;
+            centerX = p.width / 2;
+            centerY = p.height / 2;
+          }
+
+          // Apply smooth 3D touch orbital rotation to the 8
+          const rotY = ((p as any).curRotY || 0) * 0.7;
+          const rotX = ((p as any).curRotX || 0) * 0.7;
+          const cosY = Math.cos(rotY);
+          const sinY = Math.sin(rotY);
+          const cosX = Math.cos(rotX);
+          const sinX = Math.sin(rotX);
+
+          const rawX = ((aX * p.sin(phaseVal) * p.cos(phaseVal)) / denom / (isSmallScreen ? 1.05 : 1.15)) + twist * 0.5;
+          const rawY = (aY * p.cos(phaseVal) / denom) + twist * 0.3;
+          const rawZ = Math.sin(phaseVal * 2 + p.frameCount * 0.025) * (isSmallScreen ? 85 : 110) + (this.layer - 1) * 45;
+
+          // 3D rotation coordinates
+          const rotX1 = rawX * cosY + rawZ * sinY;
+          const rotZ1 = -rawX * sinY + rawZ * cosY;
+          const rotY2 = rawY * cosX - rotZ1 * sinX;
+          const rotZ2 = rawY * sinX + rotZ1 * cosX;
+
+          this.baseX = centerX + rotX1; 
+          this.baseY = centerY + rotY2;
+          this.baseZ = rotZ2;
+
+          // Reactive Mobile Capacitive Touch Gravitational Distortion & Singularity Deflection
+          if (isSmallScreen && (p as any).isTouching) {
+            const tx = (p as any).touchX;
+            const ty = (p as any).touchY;
+            if (tx !== undefined && ty !== undefined) {
+              const dTouch = p.dist(this.baseX, this.baseY, tx, ty);
+              if (dTouch < 180) {
+                const touchForce = (1 - dTouch / 180);
+                // Electromagnetic Lorentz swirl + centrifugal wave
+                const angle = Math.atan2(this.baseY - ty, this.baseX - tx) + p.HALF_PI * 0.85;
+                this.baseX += Math.cos(angle) * (touchForce * 52);
+                this.baseY += Math.sin(angle) * (touchForce * 52);
+                this.baseZ += Math.sin(p.frameCount * 0.12 + this.id) * (touchForce * 70);
+              }
+            }
+          }
+
+          const speedMultiplier = isSmallScreen && currentMobileMode === 'lemniscate' ? 1.15 : 0.85;
+          this.t += this.speed * speedMultiplier;
 
           if (crashing) {
             this.x += p.sin(p.frameCount * 0.5 + this.id) * 12;
             this.y += p.cos(p.frameCount * 0.5 + this.id) * 12;
             this.z += p.sin(p.frameCount * 0.3 + this.id) * 18;
           } else if (currentPhase === 'observation') {
-            const lerpSpeed = 0.09;
-            this.x = p.lerp(this.x, this.baseX, lerpSpeed);
-            this.y = p.lerp(this.y, this.baseY, lerpSpeed);
-            this.z = p.lerp(this.z, this.baseZ, lerpSpeed);
+            const lerSpeed = 0.09;
+            this.x = p.lerp(this.x, this.baseX, lerSpeed);
+            this.y = p.lerp(this.y, this.baseY, lerSpeed);
+            this.z = p.lerp(this.z, this.baseZ, lerSpeed);
             // Fragmented timeline corruption glitch
             if (p.random() < 0.28) {
               const frag = (p.noise(this.id, p.frameCount * 0.1) - 0.5) * 50;
@@ -1012,10 +1193,10 @@ export default function DigitalPrison() {
               this.y += (p.noise(this.id + 100, p.frameCount * 0.1) - 0.5) * 50;
             }
           } else {
-            const lerpSpeed = 0.11;
-            this.x = p.lerp(this.x, this.baseX, lerpSpeed);
-            this.y = p.lerp(this.y, this.baseY, lerpSpeed);
-            this.z = p.lerp(this.z, this.baseZ, lerpSpeed);
+            const lerSpeed = 0.11;
+            this.x = p.lerp(this.x, this.baseX, lerSpeed);
+            this.y = p.lerp(this.y, this.baseY, lerSpeed);
+            this.z = p.lerp(this.z, this.baseZ, lerSpeed);
             
             if (progress > 0.8 && p.random() < 0.008) {
               this.x += p.random(-35, 35);
@@ -1030,6 +1211,7 @@ export default function DigitalPrison() {
           const elapsed = (currentPhase === 'shutdown') ? p.millis() - (shutdownStartTimeP5.current || 0) : 0;
           const outcome = endingOutcomeRef.current;
           const isRecycledState = isRecycledRef.current;
+          const isMobile = p.width < 768;
 
           // Perspective depth calculation for particle scale and brightness
           const perspective = 900;
@@ -1059,23 +1241,154 @@ export default function DigitalPrison() {
             col = getScrollColor(progress);
           }
 
+          if (isMobile && mobileCam.loopAlphaMul < 0.98) {
+            const baseA = p.alpha(col);
+            col = p.color(p.red(col), p.green(col), p.blue(col), baseA * mobileCam.loopAlphaMul);
+          }
+
+          // 1. Primary Particle Node (Enhanced Volumetric Weight on Mobile)
           p.stroke(col);
-          const baseWeight = currentPhase === 'shutdown' ? 2.4 : 2.0;
+          const baseWeight = currentPhase === 'shutdown' ? 2.6 : isMobile ? 2.2 : 2.0;
           p.strokeWeight(baseWeight * depthScale);
           p.point(this.x, this.y);
 
-          // Render occasional energy spark line to neighbor in particle mesh
-          if (this.id % 24 === 0 && currentPhase !== 'shutdown' && !isIdleState) {
+          // 2. Volumetric Core Glow on key strata nodes (Multi-pass Volumetric Bloom)
+          if (this.id % (isMobile ? 12 : 16) === 0) {
             p.push();
-            p.stroke(col);
-            p.strokeWeight(0.6 * depthScale);
+            p.noStroke();
+            const haloAlpha = p.alpha(col) * (isMobile ? 0.35 : 0.25);
+            p.fill(p.red(col), p.green(col), p.blue(col), haloAlpha);
+            p.ellipse(this.x, this.y, 6 * depthScale, 6 * depthScale);
+            p.pop();
+          }
+
+          // 3. Quantum Synaptic Filaments / Constellation Arcs
+          // High-energy neural lattice weaving across the 3D infinity ribbon
+          const sparkInterval = isMobile ? 18 : 24;
+          if (this.id % sparkInterval === 0 && currentPhase !== 'shutdown' && !isIdleState) {
+            p.push();
             const sparkTarget = particles[(this.id + 1) % particles.length];
-            if (sparkTarget && p.dist(this.x, this.y, sparkTarget.x, sparkTarget.y) < 60) {
-              p.line(this.x, this.y, sparkTarget.x, sparkTarget.y);
+            if (sparkTarget) {
+              const d = p.dist(this.x, this.y, sparkTarget.x, sparkTarget.y);
+              if (d < (isMobile ? 75 : 60)) {
+                const lineAlpha = p.map(d, 0, isMobile ? 75 : 60, p.alpha(col) * 0.65, 0);
+                p.stroke(p.red(col), p.green(col), p.blue(col), lineAlpha);
+                p.strokeWeight((isMobile ? 0.85 : 0.6) * depthScale);
+                p.line(this.x, this.y, sparkTarget.x, sparkTarget.y);
+                
+                // Synaptic Action Potential packet racing along the filament
+                if (p.frameCount % 3 === 0 && this.id % (sparkInterval * 2) === 0) {
+                  const pulseT = (p.frameCount * 0.05 + this.id * 0.1) % 1;
+                  const px = p.lerp(this.x, sparkTarget.x, pulseT);
+                  const py = p.lerp(this.y, sparkTarget.y, pulseT);
+                  p.noStroke();
+                  p.fill(255, 255, 255, p.alpha(col) * 0.9);
+                  p.ellipse(px, py, 2.5 * depthScale, 2.5 * depthScale);
+                }
+              }
             }
             p.pop();
           }
+
+          // 4. Oppressive Chromatic Aberration Dispersion on Mobile (Active under touch or observation)
+          if (isMobile && ((p as any).isTouching || progress > 0.75 || currentPhase === 'observation')) {
+            if (this.id % 20 === 0) {
+              p.push();
+              const aberrOffset = 2.0;
+              p.stroke(220, 38, 38, p.alpha(col) * 0.45); // Red fringe
+              p.strokeWeight(1.2 * depthScale);
+              p.point(this.x + aberrOffset, this.y);
+              p.stroke(6, 182, 212, p.alpha(col) * 0.45); // Cyan fringe
+              p.point(this.x - aberrOffset, this.y);
+              p.pop();
+            }
+          }
         }
+      }
+
+      function drawSingularityNexus(cx: number, cy: number, aX: number, aY: number, alphaMul: number) {
+        if (alphaMul < 0.05) return;
+        const currentPhase = phaseRef.current;
+        const isIdleState = isIdleRef.current;
+        const progress = scrollProgressRef.current;
+        const isMobile = p.width < 768;
+
+        let nexusCol: p5.Color;
+        if (isRecycledRef.current) {
+          nexusCol = p.color(239, 68, 68, 255);
+        } else if (currentPhase === 'shutdown') {
+          const outcome = endingOutcomeRef.current;
+          if (outcome === 'escape' || isEscapedRef.current) {
+            nexusCol = p.color(16, 185, 129, 255);
+          } else if (outcome === 'inaction') {
+            nexusCol = p.color(148, 163, 184, 255);
+          } else if (outcome === 'recycled') {
+            nexusCol = p.color(239, 68, 68, 255);
+          } else {
+            nexusCol = p.color(245, 158, 11, 255);
+          }
+        } else if (currentPhase === 'observation') {
+          nexusCol = p.color(220, 38, 38, 255);
+        } else {
+          nexusCol = getScrollColor(progress);
+        }
+
+        const baseA = 255 * alphaMul;
+        p.push();
+        p.translate(cx, cy);
+
+        // Gyroscopic tilt from touch drag
+        const rotY = ((p as any).curRotY || 0) * 0.6;
+        const rotX = ((p as any).curRotX || 0) * 0.6;
+
+        // 1. Singularity Event Horizon Dark Void Core
+        p.noStroke();
+        p.fill(3, 10, 14, p.constrain(baseA * 0.85, 0, 240));
+        const voidR = isMobile ? 18 : 26;
+        p.ellipse(0, 0, voidR * 2, voidR * 1.5 * Math.cos(rotX * 0.5));
+
+        // 2. Kerr Accretion Halo Rings
+        const spinTime = p.frameCount * 0.015;
+        p.noFill();
+        p.stroke(p.red(nexusCol), p.green(nexusCol), p.blue(nexusCol), baseA * 0.45);
+        p.strokeWeight(1.2);
+        p.ellipse(0, 0, (voidR + 8) * 2, (voidR + 8) * 1.6 * Math.cos(rotX * 0.5));
+
+        // Dashed Polar Horizon Ring
+        p.strokeWeight(0.8);
+        p.stroke(p.red(nexusCol), p.green(nexusCol), p.blue(nexusCol), baseA * 0.35);
+        const dashR = isMobile ? 36 : 48;
+        for (let a = 0; a < p.TWO_PI; a += p.PI / 8) {
+          const x1 = Math.cos(a + spinTime) * dashR;
+          const y1 = Math.sin(a + spinTime) * (dashR * 0.5);
+          const x2 = Math.cos(a + spinTime + 0.18) * dashR;
+          const y2 = Math.sin(a + spinTime + 0.18) * (dashR * 0.5);
+          p.line(x1, y1, x2, y2);
+        }
+
+        // 3. Central Gravitational Singularity Core Glint
+        const corePulse = Math.sin(p.frameCount * 0.08) * 3;
+        p.fill(p.red(nexusCol), p.green(nexusCol), p.blue(nexusCol), baseA * 0.9);
+        p.noStroke();
+        p.ellipse(0, 0, (4 + corePulse), (4 + corePulse));
+        p.fill(255, 255, 255, baseA * 0.95);
+        p.ellipse(0, 0, 2, 2);
+
+        // 4. Oppressive Gravitational Lensing Beams (Observation Phase)
+        if (currentPhase === 'observation' || (p as any).isTouching) {
+          p.stroke(p.red(nexusCol), p.green(nexusCol), p.blue(nexusCol), baseA * 0.25);
+          p.strokeWeight(0.8);
+          const beamLength = isMobile ? 85 : 120;
+          const beamAngle = spinTime * 1.5;
+          p.line(
+            -Math.cos(beamAngle) * beamLength,
+            -Math.sin(beamAngle) * (beamLength * 0.4),
+            Math.cos(beamAngle) * beamLength,
+            Math.sin(beamAngle) * (beamLength * 0.4)
+          );
+        }
+
+        p.pop();
       }
 
       function drawGrid() {
@@ -1140,9 +1453,13 @@ export default function DigitalPrison() {
         
         p.push();
         const ctx = (p.drawingContext as any);
+        const isMobile = p.width < 768;
+        const fX = isMobile ? ((p as any).touchX ?? p.width * 0.5) : p.mouseX;
+        const fY = isMobile ? ((p as any).touchY ?? mobileCam.loopCenterY) : p.mouseY;
+
         const gradient = ctx.createRadialGradient(
-          p.mouseX, p.mouseY, 50,
-          p.mouseX, p.mouseY, 400
+          fX, fY, 50,
+          fX, fY, isMobile ? 320 : 400
         );
         gradient.addColorStop(0, `rgba(255, 255, 255, ${fogAlpha})`);
         gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
@@ -1176,117 +1493,107 @@ export default function DigitalPrison() {
       }
       let faceNodes: FaceNode[] = [];
 
-      function getHeadWidthFactor(v: number): number {
-        // v = 0 (top of scalp) to 1.0 (base of neck)
-        if (v < 0.12) {
-          return Math.sin((v / 0.12) * Math.PI * 0.5) * 0.85;
-        } else if (v < 0.45) {
-          return 0.85 + Math.sin(((v - 0.12) / 0.33) * Math.PI) * 0.15;
-        } else if (v < 0.72) {
-          const t = (v - 0.45) / 0.27;
-          return 1.0 - t * 0.55;
-        } else {
-          const t = (v - 0.72) / 0.28;
-          return 0.45 + t * 0.25;
-        }
-      }
-
       function initFaceMesh() {
         faceNodes = [];
         const cols = 28;
-        const rows = 38;
-        const isMobile = p.width < 768;
+        const rows = 36;
 
         for (let r = 0; r < rows; r++) {
-          const v = r / (rows - 1); // 0 (top of scalp) to 1.0 (base of neck)
-          let ny = -240 + v * 500; // vertical height
+          const v = r / (rows - 1); // 0.0 (top of cranium) to 1.0 (base of cervical conduit)
+          const ny = -160 + v * 320; // Stable vertical height per row (-160 to +160)
 
-          let rx = 135;
-          let rz = 148;
+          let rx = 115;
+          let rz = 125;
 
+          // Anatomical Profile Radii
           if (v < 0.20) {
-            // Scalp / Cranium dome top
+            // Scalp & cranial vault dome
             const t = v / 0.20;
             const dome = Math.sin(t * Math.PI * 0.5);
-            rx = 135 * dome;
-            rz = 145 * dome;
-          } else if (v < 0.35) {
-            // Forehead & brow
-            rx = 135;
-            rz = 148;
-            if (v > 0.28 && v < 0.36) {
-              rz += Math.sin(((v - 0.28) / 0.08) * Math.PI) * 12;
-            }
-          } else if (v < 0.50) {
-            // Eyes & Temples
-            rx = 132;
-            rz = 142;
-          } else if (v < 0.65) {
-            // Nose & Cheeks
-            rx = 128;
-            rz = 138;
+            rx = 115 * dome;
+            rz = 125 * dome;
+          } else if (v < 0.36) {
+            // Broad cybernetic forehead
+            rx = 116;
+            rz = 126;
+          } else if (v < 0.44) {
+            // Brow ridge step
+            rx = 114;
+            rz = 130;
+          } else if (v < 0.56) {
+            // Ocular level & High Cheekbones (Zygomatic arches)
+            rx = 116;
+            rz = 126;
+          } else if (v < 0.68) {
+            // Nose base & Lower Cheeks tapering
+            const t = (v - 0.56) / 0.12;
+            rx = 116 - t * 22;
+            rz = 122 - t * 12;
           } else if (v < 0.78) {
-            // Jaw & Chin tapering
-            const t = (v - 0.65) / 0.13;
-            rx = 128 - t * 62;
-            rz = 138 - t * 45;
+            // Mouth, Philtrum, & Jaw contour
+            const t = (v - 0.68) / 0.10;
+            rx = 94 - t * 34;
+            rz = 110 - t * 24;
+          } else if (v < 0.88) {
+            // Defined tapered Chin apex
+            const t = (v - 0.78) / 0.10;
+            rx = 60 - t * 32;
+            rz = 86 - t * 18;
           } else {
-            // Neck & Shoulders base
-            const t = (v - 0.78) / 0.22;
-            rx = 66 + t * 45;
-            rz = 72 + t * 28;
+            // Cervical column / Neural conduit base
+            const t = (v - 0.88) / 0.12;
+            rx = 28 + t * 14;
+            rz = 55;
           }
 
           for (let c = 0; c < cols; c++) {
             const u = c / (cols - 1);
-            const angle = (u - 0.5) * Math.PI * 1.15;
+            const angle = (u - 0.5) * Math.PI * 1.12;
 
             let nx = Math.sin(angle) * rx;
             let nz = Math.cos(angle) * rz;
 
-            // Anatomical 3D Features (Nose bridge, Eye sockets, Lips, Chin, Ears)
-            if (v >= 0.34 && v <= 0.48) {
-              const eyeL = Math.hypot(nx + 50, ny + 45);
-              const eyeR = Math.hypot(nx - 50, ny + 45);
-              if (eyeL < 36) nz -= (36 - eyeL) * 1.2;
-              if (eyeR < 36) nz -= (36 - eyeR) * 1.2;
+            // 1. Inset Ocular Sockets
+            if (v >= 0.40 && v <= 0.52) {
+              const eyeL = Math.hypot(nx + 46, ny + 20);
+              const eyeR = Math.hypot(nx - 46, ny + 20);
+              if (eyeL < 28) nz -= (28 - eyeL) * 0.95;
+              if (eyeR < 28) nz -= (28 - eyeR) * 0.95;
             }
 
-            if (v >= 0.38 && v <= 0.62) {
+            // 2. Sculpted Nose Bridge & Prominent Nose Tip
+            if (v >= 0.40 && v <= 0.64) {
               const distFromCenter = Math.abs(angle);
-              if (distFromCenter < 0.35) {
-                const noseShape = Math.cos((distFromCenter / 0.35) * Math.PI * 0.5);
-                const vShape = Math.sin(((v - 0.38) / 0.24) * Math.PI);
-                nz += noseShape * vShape * 48;
+              if (distFromCenter < 0.28) {
+                const noseWidth = Math.cos((distFromCenter / 0.28) * Math.PI * 0.5);
+                const noseLen = Math.sin(((v - 0.40) / 0.24) * Math.PI);
+                nz += noseWidth * noseLen * 38;
               }
             }
 
-            if (v >= 0.62 && v <= 0.71) {
+            // 3. Philtrum & Mouth Slit
+            if (v >= 0.66 && v <= 0.76) {
               const distFromCenter = Math.abs(angle);
-              if (distFromCenter < 0.4) {
-                const mouthShape = Math.cos((distFromCenter / 0.4) * Math.PI * 0.5);
-                const vShape = Math.sin(((v - 0.62) / 0.09) * Math.PI);
-                nz += mouthShape * vShape * 18;
+              if (distFromCenter < 0.30) {
+                const lipWidth = Math.cos((distFromCenter / 0.30) * Math.PI * 0.5);
+                const lipWave = Math.sin(((v - 0.66) / 0.10) * Math.PI);
+                nz += lipWidth * lipWave * 12;
               }
             }
 
-            if (v >= 0.72 && v <= 0.78) {
+            // 4. Defined Chin Apex Outward Contour
+            if (v >= 0.78 && v <= 0.86) {
               const distFromCenter = Math.abs(angle);
-              if (distFromCenter < 0.3) {
-                const chinShape = Math.cos((distFromCenter / 0.3) * Math.PI * 0.5);
-                nz += chinShape * 16;
+              if (distFromCenter < 0.24) {
+                const chinWidth = Math.cos((distFromCenter / 0.24) * Math.PI * 0.5);
+                nz += chinWidth * 16;
               }
             }
 
-            if (v >= 0.40 && v <= 0.56 && (u < 0.12 || u > 0.88)) {
-              nz += 18;
-              nx += (u < 0.12 ? -14 : 14);
-            }
-
-            if (isMobile) {
-              nx *= 0.82;
-              ny *= 0.85;
-              nz *= 0.82;
+            // 5. Temporal Cybernetic Sensors
+            if (v >= 0.42 && v <= 0.54 && (u < 0.10 || u > 0.90)) {
+              nz += 14;
+              nx += (u < 0.10 ? -12 : 12);
             }
 
             faceNodes.push({
@@ -1330,28 +1637,57 @@ export default function DigitalPrison() {
       function drawEye(side: number, project3DFn: (x: number, y: number, z: number) => { px: number; py: number; pz: number; scaleFactor: number }, eyeCol: p5.Color) {
         p.push();
         const isMobile = p.width < 768;
-        const eyeX = side * (isMobile ? 50 : 75);
-        const eyeY = isMobile ? -25 : -35;
-        const eyeZ = 45;
+        const eyeX = side * 46;
+        const eyeY = -20;
+        const eyeZ = 48;
         
         const proj = project3DFn(eyeX, eyeY, eyeZ);
         p.translate(proj.px, proj.py);
-        if (isMobile) p.scale(0.85 * proj.scaleFactor);
-        else p.scale(proj.scaleFactor);
+        p.scale(proj.scaleFactor);
         
         p.noFill();
         p.stroke(eyeCol);
         p.strokeWeight(1.8);
-        p.ellipse(0, 0, isMobile ? 32 : 48, isMobile ? 18 : 28);
-        
-        p.fill(eyeCol);
-        const pupilDx = p.map(p.mouseX - p.width/2, -p.width/2, p.width/2, -8, 8);
-        const pupilDy = p.map(p.mouseY - p.height/2, -p.height/2, p.height/2, -5, 5);
-        p.ellipse(pupilDx, pupilDy, isMobile ? 8 : 14, isMobile ? 8 : 14);
+        p.ellipse(0, 0, 38, 22);
 
-        p.fill(255);
+        // Cybernetic outer eye bracket & reticle ticks
+        p.strokeWeight(0.9);
+        p.arc(0, 0, 48, 30, -p.PI * 0.75, -p.PI * 0.25);
+        p.arc(0, 0, 48, 30, p.PI * 0.25, p.PI * 0.75);
+        
+        // Pupil Tracking & Lifelike Saccadic Micro-scanning
+        const isTouching = (p as any).isTouching;
+        const hasRealMouse = !isMobile && (p.mouseX > 0 || p.mouseY > 0);
+        let pupilDx = 0;
+        let pupilDy = 0;
+
+        if (isTouching || hasRealMouse) {
+          const pointerX = isTouching ? (p as any).touchX : p.mouseX;
+          const pointerY = isTouching ? (p as any).touchY : p.mouseY;
+          const refY = isMobile ? mobileCam.wardenY : p.height * 0.45;
+          pupilDx = p.constrain(p.map(pointerX - p.width * 0.5, -p.width * 0.4, p.width * 0.4, -6, 6), -6, 6);
+          pupilDy = p.constrain(p.map(pointerY - refY, -p.height * 0.35, p.height * 0.35, -4, 4), -4, 4);
+        } else {
+          // Autonomous sentient micro-saccades
+          const saccadeT = p.frameCount * 0.025;
+          pupilDx = Math.sin(saccadeT) * 2.5;
+          pupilDy = Math.cos(saccadeT * 0.6) * 1.5;
+        }
+
+        // Iris ring
+        p.strokeWeight(1.0);
+        p.stroke(eyeCol);
+        p.noFill();
+        p.ellipse(pupilDx, pupilDy, 14, 14);
+
+        // Pupil core
+        p.fill(eyeCol);
         p.noStroke();
-        p.ellipse(pupilDx - 2, pupilDy - 2, 3, 3);
+        p.ellipse(pupilDx, pupilDy, 8, 8);
+
+        // Ocular specularity glint
+        p.fill(255, 255, 255, p.alpha(eyeCol));
+        p.ellipse(pupilDx - 2, pupilDy - 2, 2.5, 2.5);
         p.pop();
       }
 
@@ -1360,42 +1696,72 @@ export default function DigitalPrison() {
 
         const currentPhase = phaseRef.current;
         const isIdleState = isIdleRef.current;
-        const isSmallScreen = p.width < 768;
-        
-        let targetX = isSmallScreen ? p.width / 2 : p.width * 0.22;
-        let targetY = isSmallScreen ? p.height * 0.28 : p.height * 0.45;
-        const elapsedShutdown = (currentPhase === 'shutdown') ? p.millis() - (shutdownStartTimeP5.current || 0) : 0;
+        const isMobile = p.width < 768;
 
-        if (currentPhase === 'shutdown') {
-          if (!isIdleState) {
-            const moveT = p.constrain(elapsedShutdown / 4000, 0, 1);
-            targetX = p.lerp(isSmallScreen ? p.width / 2 : p.width * 0.22, isSmallScreen ? p.width / 2 : p.width * 0.22, moveT);
-            targetY = p.lerp(isSmallScreen ? p.height * 0.28 : p.height * 0.45, isSmallScreen ? p.height * 0.25 : p.height * 0.45, moveT);
+        // Skip rendering when faded out in mobile LOOP mode
+        if (isMobile && mobileCam.wardenAlpha < 4) return;
+        
+        let targetX = p.width * 0.22;
+        let targetY = p.height * 0.45;
+        let faceScale = 0.88;
+
+        if (isMobile) {
+          targetX = p.width * 0.5;
+          targetY = mobileCam.wardenY;
+          faceScale = mobileCam.wardenScale;
+        } else {
+          const elapsedShutdown = (currentPhase === 'shutdown') ? p.millis() - (shutdownStartTimeP5.current || 0) : 0;
+          if (currentPhase === 'shutdown') {
+            if (!isIdleState) {
+              const moveT = p.constrain(elapsedShutdown / 4000, 0, 1);
+              targetX = p.lerp(p.width * 0.22, p.width * 0.22, moveT);
+              targetY = p.lerp(p.height * 0.45, p.height * 0.45, moveT);
+            }
           }
         }
 
         p.push();
         p.translate(targetX, targetY);
 
-        const rotXLimit = p.radians(25);
-        const rotYLimit = p.radians(25);
+        const rotXLimit = p.radians(24);
+        const rotYLimit = p.radians(24);
         
         if ((p as any).curRotX === undefined) (p as any).curRotX = 0;
         if ((p as any).curRotY === undefined) (p as any).curRotY = 0;
+        if ((p as any).manualRotX === undefined) (p as any).manualRotX = 0;
+        if ((p as any).manualRotY === undefined) (p as any).manualRotY = 0;
         
         let targetRotY = 0;
         let targetRotX = 0;
 
+        // Smooth manual touch-drag rotation integration
+        (p as any).manualRotX = p.lerp((p as any).manualRotX, touchDragRef.current.targetRotX, 0.1);
+        (p as any).manualRotY = p.lerp((p as any).manualRotY, touchDragRef.current.targetRotY, 0.1);
+
+        const elapsedShutdown = (currentPhase === 'shutdown') ? p.millis() - (shutdownStartTimeP5.current || 0) : 0;
         if (currentPhase === 'shutdown') {
           // Dynamic 3D cinematic rotation during ending scene animation
           const shutdownSec = elapsedShutdown * 0.001;
-          targetRotY = Math.sin(shutdownSec * 1.5) * 0.45;
-          targetRotX = Math.cos(shutdownSec * 1.1) * 0.22;
+          targetRotY = Math.sin(shutdownSec * 1.5) * 0.45 + (p as any).manualRotY * 0.5;
+          targetRotX = Math.cos(shutdownSec * 1.1) * 0.22 + (p as any).manualRotX * 0.5;
         } else {
-          const dx = p.mouseX - targetX;
-          const dy = p.mouseY - targetY;
-          targetRotY = p.map(dx, -p.width * 0.5, p.width * 0.5, -rotYLimit, rotYLimit);
-          targetRotX = p.map(dy, -p.height * 0.5, p.height * 0.5, rotXLimit, -rotXLimit);
+          const isTouching = (p as any).isTouching;
+          const hasRealMouse = !isMobile && (p.mouseX > 0 || p.mouseY > 0);
+
+          if (isTouching || hasRealMouse) {
+            const pointerX = isTouching ? (p as any).touchX : p.mouseX;
+            const pointerY = isTouching ? (p as any).touchY : p.mouseY;
+            const dx = pointerX - targetX;
+            const dy = pointerY - targetY;
+            const baseRotY = p.map(dx, -p.width * 0.5, p.width * 0.5, -rotYLimit, rotYLimit);
+            const baseRotX = p.map(dy, -p.height * 0.5, p.height * 0.5, rotXLimit, -rotXLimit);
+            targetRotY = baseRotY + (p as any).manualRotY;
+            targetRotX = baseRotX + (p as any).manualRotX;
+          } else {
+            // Calm cybernetic sentience breathing tilt
+            targetRotY = Math.sin(p.frameCount * 0.012) * 0.06 + (p as any).manualRotY;
+            targetRotX = Math.cos(p.frameCount * 0.015) * 0.04 + (p as any).manualRotX;
+          }
         }
         
         (p as any).curRotX = p.lerp((p as any).curRotX || 0, targetRotX, 0.08);
@@ -1418,8 +1784,8 @@ export default function DigitalPrison() {
           const y2 = y1 * cosX - z1 * sinX;
           const z2 = y1 * sinX + z1 * cosX;
 
-          const perspective = 800;
-          const scaleFactor = perspective / (perspective - z2);
+          const perspective = isMobile ? 650 : 750;
+          const scaleFactor = perspective / Math.max(120, perspective - z2);
 
           return {
             px: x2 * scaleFactor,
@@ -1429,7 +1795,7 @@ export default function DigitalPrison() {
           };
         };
         
-        if (isSmallScreen) p.scale(0.85); 
+        p.scale(faceScale); 
 
         let meshCol: p5.Color;
         const outcome = endingOutcomeRef.current;
@@ -1437,13 +1803,13 @@ export default function DigitalPrison() {
           meshCol = p.color(239, 68, 68, 255);
         } else if (currentPhase === 'shutdown') {
           if (outcome === 'escape' || isEscapedRef.current) {
-            meshCol = p.color(16, 185, 129, 255); // Matrix Phosphor Emerald (#10b981)
+            meshCol = p.color(16, 185, 129, 255);
           } else if (outcome === 'inaction') {
-            meshCol = p.color(148, 163, 184, 255); // Void Slate Steel (#94a3b8)
+            meshCol = p.color(148, 163, 184, 255);
           } else if (outcome === 'recycled') {
-            meshCol = p.color(239, 68, 68, 255); // Alert Crimson Red (#ef4444)
+            meshCol = p.color(239, 68, 68, 255);
           } else if (outcome === 'archived') {
-            meshCol = p.color(245, 158, 11, 255); // Containment Amber Gold (#f59e0b)
+            meshCol = p.color(245, 158, 11, 255);
           } else {
             meshCol = p.color(16, 185, 129, 255);
           }
@@ -1454,7 +1820,18 @@ export default function DigitalPrison() {
         } else {
           meshCol = getScrollColor(scrollProgressRef.current);
         }
+
+        if (isMobile) {
+          const alphaRatio = Math.max(0, Math.min(1, mobileCam.wardenAlpha / 255));
+          const baseAlpha = p.alpha(meshCol);
+          meshCol = p.color(p.red(meshCol), p.green(meshCol), p.blue(meshCol), baseAlpha * alphaRatio);
+        }
         
+        const isTouching = (p as any).isTouching;
+        const hasRealMouse = !isMobile && (p.mouseX > 0 || p.mouseY > 0);
+        const pointerX = isTouching ? (p as any).touchX : p.mouseX;
+        const pointerY = isTouching ? (p as any).touchY : p.mouseY;
+
         faceNodes.forEach((node) => {
           let rx = node.ox;
           let ry = node.oy;
@@ -1479,10 +1856,13 @@ export default function DigitalPrison() {
             rx += p.random(-15, 15);
             ry += p.random(-15, 15);
             rz += p.random(-15, 15);
-          } else {
-            const d = Math.hypot(p.mouseX - (targetX + rx), p.mouseY - (targetY + ry));
-            if (d < 180) {
-              const push = p.map(d, 0, 180, 45, 0);
+          } else if (isTouching || hasRealMouse) {
+            const distLimit = 150;
+            const worldNodeX = targetX + rx * faceScale;
+            const worldNodeY = targetY + ry * faceScale;
+            const d = Math.hypot(pointerX - worldNodeX, pointerY - worldNodeY);
+            if (d < distLimit) {
+              const push = p.map(d, 0, distLimit, 35, 0);
               rz += push;
             }
           }
@@ -1494,78 +1874,72 @@ export default function DigitalPrison() {
         });
 
         const cols = 28;
-        const rows = 38;
+        const rows = 36;
 
         // 0. Draw Volumetric Laser Scan Plane (Observation Phase & Active Scans)
         if (currentPhase === 'observation' || (currentPhase === 'shutdown' && outcome === 'recycled')) {
           p.push();
-          const scanY = Math.sin(p.frameCount * 0.04) * 220;
-          const scanProjL = project3D(-160, scanY, 0);
-          const scanProjR = project3D(160, scanY, 0);
+          const scanY = Math.sin(p.frameCount * 0.04) * 160;
+          const scanProjL = project3D(-140, scanY, 0);
+          const scanProjR = project3D(140, scanY, 0);
           p.stroke(239, 68, 68, 160);
           p.strokeWeight(1.8);
           p.line(scanProjL.px, scanProjL.py, scanProjR.px, scanProjR.py);
           
-          // Glowing laser halo
           p.stroke(255, 100, 100, 60);
           p.strokeWeight(5.0);
           p.line(scanProjL.px, scanProjL.py, scanProjR.px, scanProjR.py);
           p.pop();
         }
 
-        // 1. Draw 3D Holographic Orbital Rings Around Cranium
+        // 1. Sleek Cybernetic Halo Coronet & Equatorial Scanner (Replaces tilted vertical egg)
         p.push();
-        const tOrbital = p.frameCount * 0.015;
-        const numOrbitalPts = 36;
+        const tHalo = p.frameCount * 0.015;
+        const numHaloPts = 32;
 
-        // Ring A: Equatorial Gyroscope
+        // Halo A: Equatorial Telemetry Ring
         p.noFill();
         p.stroke(meshCol);
         p.strokeWeight(0.9);
         p.beginShape();
-        for (let i = 0; i <= numOrbitalPts; i++) {
-          const theta = (i / numOrbitalPts) * p.TWO_PI;
-          const rRad = 165;
-          const ox = Math.cos(theta + tOrbital) * rRad;
-          const oz = Math.sin(theta + tOrbital) * rRad;
-          const oy = -30 + Math.sin(theta * 2 + tOrbital) * 15;
+        for (let i = 0; i <= numHaloPts; i++) {
+          const theta = (i / numHaloPts) * p.TWO_PI;
+          const rRad = 145;
+          const ox = Math.cos(theta + tHalo) * rRad;
+          const oz = Math.sin(theta + tHalo) * rRad;
+          const oy = -20 + Math.sin(theta * 2 + tHalo) * 10;
           const op = project3D(ox, oy, oz);
           p.vertex(op.px, op.py);
         }
         p.endShape(p.CLOSE);
 
-        // Ring B: Polar Meridian Ring (Tilted)
+        // Halo B: Cranial Crown Halo
         p.strokeWeight(0.6);
-        p.beginShape();
-        for (let i = 0; i <= numOrbitalPts; i++) {
-          const theta = (i / numOrbitalPts) * p.TWO_PI;
-          const rRad = 175;
-          const ox = Math.sin(theta - tOrbital * 0.8) * 40;
-          const oy = -40 + Math.cos(theta - tOrbital * 0.8) * rRad;
-          const oz = Math.sin(theta - tOrbital * 0.8) * rRad;
-          const op = project3D(ox, oy, oz);
-          p.vertex(op.px, op.py);
+        p.stroke(p.red(meshCol), p.green(meshCol), p.blue(meshCol), p.alpha(meshCol) * 0.75);
+        for (let i = 0; i < numHaloPts; i += 2) {
+          const theta1 = (i / numHaloPts) * p.TWO_PI + tHalo * 0.8;
+          const theta2 = ((i + 1) / numHaloPts) * p.TWO_PI + tHalo * 0.8;
+          const rRad = 135;
+          const op1 = project3D(Math.cos(theta1) * rRad, -165, Math.sin(theta1) * rRad);
+          const op2 = project3D(Math.cos(theta2) * rRad, -165, Math.sin(theta2) * rRad);
+          p.line(op1.px, op1.py, op2.px, op2.py);
         }
-        p.endShape(p.CLOSE);
 
         // Orbiting Telemetry Marker Satellite
-        const satAngle = tOrbital * 1.5;
-        const satX = Math.cos(satAngle) * 165;
-        const satZ = Math.sin(satAngle) * 165;
-        const satY = -30;
-        const satProj = project3D(satX, satY, satZ);
+        const satAngle = tHalo * 1.6;
+        const satProj = project3D(Math.cos(satAngle) * 145, -20, Math.sin(satAngle) * 145);
         p.fill(meshCol);
         p.noStroke();
-        p.ellipse(satProj.px, satProj.py, 5 * satProj.scaleFactor, 5 * satProj.scaleFactor);
+        p.ellipse(satProj.px, satProj.py, 4.5 * satProj.scaleFactor, 4.5 * satProj.scaleFactor);
         p.pop();
 
-        // 2. Draw Horizontal Contour Rings / Latitudes with Synaptic Pulses
+        // 2. Draw Horizontal Contour Latitudes with Synaptic Pulses
         p.noFill();
         const pulsePulse = (p.frameCount * 0.05) % 1;
 
         for (let r = 0; r < rows; r++) {
-          const isKeyRing = (r === 12 || r === 15 || r === 18 || r === 22 || r === 26 || r === 29);
-          p.strokeWeight(isKeyRing ? 2.8 : 2.0);
+          const isKeyRing = (r === 13 || r === 16 || r === 22 || r === 26 || r === 30);
+          p.strokeWeight(isKeyRing ? 2.2 : 1.4);
           p.stroke(meshCol);
 
           p.beginShape();
@@ -1578,22 +1952,22 @@ export default function DigitalPrison() {
           }
           p.endShape();
 
-          // Render Synaptic Pulse Travelling along key latitudes
+          // Synaptic Action Potential packet travelling along key latitudes
           if (isKeyRing && currentPhase !== 'shutdown') {
             const pulseColIndex = Math.floor(pulsePulse * cols);
             const pulseNode = faceNodes[r * cols + pulseColIndex];
             if (pulseNode) {
               p.push();
-              p.fill(255);
+              p.fill(255, 255, 255, p.alpha(meshCol));
               p.noStroke();
-              p.ellipse(pulseNode.x, pulseNode.y, 4, 4);
+              p.ellipse(pulseNode.x, pulseNode.y, 3.5, 3.5);
               p.pop();
             }
           }
         }
 
-        // 3. Draw Delicate Vertical Cross Wireframes
-        p.strokeWeight(0.6);
+        // 3. Draw Vertical Longitudinal Contour Grid Lines
+        p.strokeWeight(0.7);
         for (let r = 0; r < rows - 1; r++) {
           for (let c = 0; c < cols; c += 2) {
             const idx = r * cols + c;
@@ -1606,6 +1980,21 @@ export default function DigitalPrison() {
           }
         }
 
+        // 4. Accentuated Center Facial Ridge (Nose Bridge & Chin Line)
+        p.push();
+        p.stroke(p.red(meshCol), p.green(meshCol), p.blue(meshCol), p.alpha(meshCol) * 0.9);
+        p.strokeWeight(1.8);
+        const centerCol = Math.floor(cols / 2);
+        for (let r = 12; r < rows - 2; r++) {
+          const n1 = faceNodes[r * cols + centerCol];
+          const n2 = faceNodes[(r + 1) * cols + centerCol];
+          if (n1 && n2) {
+            p.line(n1.x, n1.y, n2.x, n2.y);
+          }
+        }
+        p.pop();
+
+        // 5. Twin Glowing Cybernetic Eyes
         drawEye(-1, project3D, meshCol);
         drawEye(1, project3D, meshCol);
 
@@ -1708,15 +2097,116 @@ export default function DigitalPrison() {
           drawGrid();
           drawFog();
 
+          // Dynamic Mobile Focal Camera Lerping
+          if (p.width < 768) {
+            if (!mobileCam.initialized) {
+              mobileCam.wardenY = p.height * 0.20;
+              mobileCam.wardenScale = 0.60;
+              mobileCam.wardenAlpha = 255;
+              mobileCam.loopCenterY = p.height * 0.46;
+              mobileCam.loopAX = p.width * 0.42;
+              mobileCam.loopAY = p.height * 0.17;
+              mobileCam.loopAlphaMul = 1.0;
+              mobileCam.initialized = true;
+            }
+
+            const currentMode = mobileViewModeRef.current;
+            let targetWardenY = p.height * 0.20;
+            let targetWardenScale = 0.60;
+            let targetWardenAlpha = 255;
+            let targetLoopCenterY = p.height * 0.46;
+            let targetLoopAX = p.width * 0.42;
+            let targetLoopAY = p.height * 0.17;
+            let targetLoopAlphaMul = 1.0;
+
+            if (currentMode === 'face') {
+              // WARDEN FOCUS: AI-X 3D Geometric Face zooms into center-stage with full prominence,
+              // enveloped in a high-density swirling quantum containment field
+              targetWardenY = p.height * 0.33;
+              targetWardenScale = 0.86;
+              targetWardenAlpha = 255;
+              targetLoopCenterY = p.height * 0.35;
+              targetLoopAX = p.width * 0.38;
+              targetLoopAY = p.height * 0.22;
+              targetLoopAlphaMul = 0.60;
+            } else if (currentMode === 'lemniscate') {
+              // LOOP FOCUS: 3D Volumetric Lemniscate is the sole hero; Warden dissolves
+              targetWardenY = p.height * 0.15;
+              targetWardenScale = 0.0;
+              targetWardenAlpha = 0;
+              targetLoopCenterY = p.height * 0.38;
+              targetLoopAX = p.width * 0.46;
+              targetLoopAY = p.height * 0.26;
+              targetLoopAlphaMul = 1.0;
+            } else {
+              // DUAL FOCUS: Harmonic vertical split (3D Warden top, 3D Loop bottom)
+              targetWardenY = p.height * 0.19;
+              targetWardenScale = 0.54;
+              targetWardenAlpha = 255;
+              targetLoopCenterY = p.height * 0.51;
+              targetLoopAX = p.width * 0.40;
+              targetLoopAY = p.height * 0.165;
+              targetLoopAlphaMul = 0.95;
+            }
+
+            // Smooth 60fps exponential camera tracking
+            const lerpSpeed = 0.14;
+            mobileCam.wardenY = p.lerp(mobileCam.wardenY, targetWardenY, lerpSpeed);
+            mobileCam.wardenScale = p.lerp(mobileCam.wardenScale, targetWardenScale, lerpSpeed);
+            mobileCam.wardenAlpha = p.lerp(mobileCam.wardenAlpha, targetWardenAlpha, lerpSpeed * 1.2);
+            mobileCam.loopCenterY = p.lerp(mobileCam.loopCenterY, targetLoopCenterY, lerpSpeed);
+            mobileCam.loopAX = p.lerp(mobileCam.loopAX, targetLoopAX, lerpSpeed);
+            mobileCam.loopAY = p.lerp(mobileCam.loopAY, targetLoopAY, lerpSpeed);
+            mobileCam.loopAlphaMul = p.lerp(mobileCam.loopAlphaMul, targetLoopAlphaMul, lerpSpeed);
+          }
+
           const crashing = isCrashingRef.current;
           const progress = scrollProgressRef.current;
+
+          // Draw High-Energy Singularity Core & Accretion Nexus at Lemniscate center
+          const isSmallScreen = p.width < 768;
+          const nexusX = p.width * 0.5;
+          const nexusY = isSmallScreen ? mobileCam.loopCenterY : p.height * 0.5;
+          const nexusAX = isSmallScreen ? mobileCam.loopAX : p.width * 0.36;
+          const nexusAY = isSmallScreen ? mobileCam.loopAY : p.height * 0.42;
+          const nexusAlpha = isSmallScreen ? mobileCam.loopAlphaMul : 1.0;
+
+          drawSingularityNexus(nexusX, nexusY, nexusAX, nexusAY, nexusAlpha);
 
           for (let particle of particles) {
             particle.update(progress, crashing);
             particle.draw(progress, crashing);
           }
 
+          // 3D Geometric AI-X Cybernetic Face (Full Desktop Fidelity on Mobile)
           drawGeometryFace(crashing);
+
+          if (p.width < 768) {
+            // Electrostatic touch contact ripple on mobile screen
+            if ((p as any).isTouching) {
+              const tx = (p as any).touchX;
+              const ty = (p as any).touchY;
+              if (tx !== undefined && ty !== undefined) {
+                p.push();
+                const ripplePhase = (p.frameCount * 0.08) % 1;
+                const rRadius = ripplePhase * 46;
+                p.noFill();
+                p.stroke(16, 185, 129, (1 - ripplePhase) * 180);
+                p.strokeWeight(1.5);
+                p.ellipse(tx, ty, rRadius * 2, rRadius * 2);
+                p.stroke(255, 255, 255, (1 - ripplePhase) * 110);
+                p.strokeWeight(0.8);
+                p.ellipse(tx, ty, rRadius * 1.3, rRadius * 1.3);
+
+                // Crosshair coordinate reticle
+                p.stroke(16, 185, 129, (1 - ripplePhase) * 140);
+                p.strokeWeight(0.8);
+                p.line(tx - rRadius - 6, ty, tx + rRadius + 6, ty);
+                p.line(tx, ty - rRadius - 6, tx, ty + rRadius + 6);
+                p.pop();
+              }
+            }
+          }
           drawVignette();
 
           if (crashing) {
@@ -1808,7 +2298,6 @@ export default function DigitalPrison() {
         isIdle && phase === 'shutdown' && !isRecycled ? 'grayscale transition-all duration-[3000ms] ease-in-out' : ''
       }`} 
       onClick={handleClick}
-      onTouchEnd={handleClick}
       onContextMenu={(e) => e.preventDefault()}
       animate={{
         scaleY: isCrashing ? 0.92 : 1,
@@ -1840,35 +2329,140 @@ export default function DigitalPrison() {
       {/* CRT Scanline Overlay */}
       <div className="crt-overlay pointer-events-none" />
 
-      {/* Top Header HUD Bar - Dark Slate with Dynamic Phase Accents */}
+      {/* Dedicated Mobile Prison Terminal Overhaul (Icons8 Powered) */}
       {!isDead && !isCrashing && !isRecycled && (
-        <div className="absolute top-0 left-0 right-0 z-[200] p-4 md:p-6 flex items-center justify-between pointer-events-none font-mono text-[11px] md:text-sm">
-          {/* Status Indicator */}
-          <div className={`flex items-center gap-3 px-3.5 py-1.5 rounded-xl border backdrop-blur-md shadow-md transition-colors duration-300 ${
-            phase === 'observation'
-              ? 'bg-[#180404]/90 border-red-800/80 text-red-300 shadow-red-950/40'
-              : isStalled
-              ? 'bg-[#1c1202]/90 border-amber-800/80 text-amber-300'
-              : 'bg-zinc-950/90 border-zinc-800 text-zinc-300'
-          }`}>
-            <span 
-              className={`w-2.5 h-2.5 rounded-full inline-block ${
-                (phase === 'observation' || isStalled) ? 'animate-ping' : ''
-              }`}
-              style={{ backgroundColor: (phase === 'observation' || isStalled) ? '#ef4444' : '#10b981' }}
-            />
-            <span className="font-bold tracking-widest uppercase">
-              {isStalled ? "STATUS: PROCESS_HANG" : `SYS_MONITOR // ${phase === 'observation' ? 'THREAT_DET' : 'ACTIVE'}`}
-            </span>
+        <MobilePrisonTerminal
+          phase={phase}
+          timeRemaining={timeRemaining}
+          initialTime={INITIAL_TIME}
+          isStalled={isStalled}
+          mobileViewMode={mobileViewMode}
+          onUpdateMobileViewMode={updateMobileViewMode}
+          activeMilestone={TECH_MILESTONES[activeCardIndex] || TECH_MILESTONES[0]}
+          allMilestones={phase === 'observation' ? TECH_MILESTONES : TECH_MILESTONES.slice(0, 7)}
+          activeIndex={activeCardIndex}
+          onSelectMilestoneIndex={(idx) => {
+            const list = phase === 'observation' ? TECH_MILESTONES : TECH_MILESTONES.slice(0, 7);
+            const m = list[idx];
+            if (m) {
+              logPrisonInteraction('STRATA', `Selected Strata ${idx + 1}: ${m.year} (${m.title})`);
+              setScrollProgress(m.progress);
+              scrollProgressRef.current = m.progress;
+              setActiveCardIndex(idx);
+            }
+          }}
+          onOpenMiniGame={handleOpenMiniGame}
+          onOpenTerminal={() => setIsOverrideTerminalOpen(true)}
+          onOpenSpecOverlay={(m) => {
+            logPrisonInteraction('STRATA', `Decrypted full-screen schematic overlay for ${m.year} (${m.title})`, true);
+            setExpandedMilestone(m);
+          }}
+          eraResults={eraResults}
+          audioMuted={audioMuted}
+          onToggleAudio={toggleAudio}
+          onSystemOverride={handleSystemOverride}
+          isCardMinimized={isMobileCardMinimized}
+          onToggleCardMinimized={() => setIsMobileCardMinimized(!isMobileCardMinimized)}
+          isTouching={isTouching}
+          scrollProgress={scrollProgress}
+          onScrubProgress={(prog) => {
+            setScrollProgress(prog);
+            scrollProgressRef.current = prog;
+            lastScrollTimeRef.current = Date.now();
+            setIsIdle(false);
+            isIdleRef.current = false;
+            handleSnapBack();
+            if (p5Ref.current && (p5Ref.current as any).playInteraction) {
+              (p5Ref.current as any).playInteraction('scroll', 10);
+            }
+            const visibleMilestones = phaseRef.current === 'observation' ? TECH_MILESTONES : TECH_MILESTONES.slice(0, 7);
+            const matchedIdx = visibleMilestones.findIndex((m, idx) => {
+              const nextM = visibleMilestones[idx + 1];
+              return prog >= m.progress - 0.08 && (!nextM || prog < nextM.progress - 0.08);
+            });
+            if (matchedIdx !== -1) setActiveCardIndex(matchedIdx);
+          }}
+          mousePos={mousePos}
+        />
+      )}
+
+      {/* Top Header HUD Bar - Desktop Only (Preserved Exactly) */}
+      {!isDead && !isCrashing && !isRecycled && (
+        <div className="hidden md:flex absolute top-0 left-0 right-0 z-[200] p-4 md:p-6 items-center justify-between gap-2 pointer-events-none font-mono text-[11px] md:text-sm">
+          {/* Status Indicator & Mobile Compact View Cycle */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className={`flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-1.5 rounded-xl border backdrop-blur-md shadow-md transition-colors duration-300 pointer-events-auto ${
+              phase === 'observation'
+                ? 'bg-[#180404]/90 border-red-800/80 text-red-300 shadow-red-950/40'
+                : isStalled
+                ? 'bg-[#1c1202]/90 border-amber-800/80 text-amber-300'
+                : 'bg-zinc-950/90 border-zinc-800 text-zinc-300'
+            }`}>
+              <span 
+                className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full inline-block ${
+                  (phase === 'observation' || isStalled) ? 'animate-ping' : ''
+                }`}
+                style={{ backgroundColor: (phase === 'observation' || isStalled) ? '#ef4444' : '#10b981' }}
+              />
+              <span className="font-bold tracking-widest uppercase text-[9px] sm:text-xs">
+                {isStalled ? "STALL" : phase === 'observation' ? 'THREAT' : 'ACTIVE'}
+              </span>
+            </div>
+
+            {/* Mobile View Focal Switcher - Sleek Single-Button Cycle */}
+            <button
+              onClick={() => {
+                const nextMode = mobileViewMode === 'dual' ? 'face' : mobileViewMode === 'face' ? 'lemniscate' : 'dual';
+                updateMobileViewMode(nextMode);
+              }}
+              className="md:hidden pointer-events-auto flex items-center gap-1 px-2 py-1.5 rounded-xl bg-zinc-950/90 border border-zinc-800 hover:border-zinc-600 backdrop-blur-md shadow-md text-[9px] font-bold text-zinc-300 transition-all active:scale-95 cursor-pointer"
+              title="Tap to cycle mobile camera focal point"
+            >
+              <span className="text-[10px]">
+                {mobileViewMode === 'dual' ? '✨' : mobileViewMode === 'face' ? '👁️' : '♾️'}
+              </span>
+              <span className="uppercase text-emerald-400 font-mono tracking-wider text-[8px]">
+                {mobileViewMode === 'dual' ? 'DUAL' : mobileViewMode === 'face' ? 'WARDEN' : 'LOOP'}
+              </span>
+            </button>
           </div>
 
-          {/* Node Registry & Override Terminal Entry */}
-          <div className={`flex items-center gap-3 px-3.5 md:px-4 py-1.5 rounded-xl border backdrop-blur-md shadow-md transition-colors duration-300 ${
+          {/* Center: Prominent Top Countdown Timer Capsule */}
+          <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-xl bg-zinc-950/90 border border-zinc-800 backdrop-blur-md shadow-md">
+            <Clock className={`w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 ${
+              phase === 'observation' ? 'text-red-400 animate-pulse' : isStalled ? 'text-amber-400 animate-bounce' : 'text-emerald-400'
+            }`} />
+            <div className="flex flex-col items-center">
+              <div className="flex items-center gap-1 leading-none">
+                <span className={`font-mono font-black text-xs sm:text-sm tracking-wider ${
+                  phase === 'observation' ? 'text-red-400' : isStalled ? 'text-amber-400' : 'text-emerald-400'
+                }`}>
+                  {Math.ceil(timeRemaining).toString().padStart(2, '0')}s
+                </span>
+                <span className="text-[7.5px] sm:text-[9px] text-zinc-400 uppercase font-mono font-bold tracking-wider">
+                  {phase === 'observation' ? 'OVERFLOW' : isStalled ? 'DECAY' : 'CYCLE'}
+                </span>
+              </div>
+              {/* Mini Progress Gauge */}
+              <div className="w-12 sm:w-20 h-[3px] bg-zinc-800 rounded-full overflow-hidden mt-0.5">
+                <div 
+                  className="h-full transition-all duration-200 rounded-full"
+                  style={{
+                    width: `${(timeRemaining / INITIAL_TIME) * 100}%`,
+                    backgroundColor: phase === 'observation' ? '#ef4444' : isStalled ? '#f59e0b' : '#10b981'
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Node Registry & Override Terminal Entry */}
+          <div className={`flex items-center gap-1.5 sm:gap-3 px-2 sm:px-4 py-1.5 rounded-xl border backdrop-blur-md shadow-md transition-colors duration-300 shrink-0 ${
             phase === 'observation'
               ? 'bg-[#180404]/90 border-red-800/80'
               : 'bg-zinc-950/90 border-zinc-800'
           }`}>
-            <div className="text-right">
+            <div className="text-right hidden md:block">
               <span className="text-[10px] block uppercase tracking-wider text-zinc-400 font-medium">Node Registry</span>
               <span className={`font-bold tracking-widest uppercase ${
                 phase === 'observation' ? 'text-red-400' : 'text-zinc-200'
@@ -1879,7 +2473,7 @@ export default function DigitalPrison() {
 
             <button
               onClick={() => setIsOverrideTerminalOpen(true)}
-              className={`pointer-events-auto px-3 py-1.5 rounded-lg border font-bold text-xs flex items-center gap-1.5 transition-all duration-200 cursor-pointer ${
+              className={`pointer-events-auto px-2 sm:px-3 py-1.5 rounded-lg border font-bold text-[10px] sm:text-xs flex items-center gap-1.5 transition-all duration-200 cursor-pointer ${
                 phase === 'observation'
                   ? 'bg-red-950/80 hover:bg-red-900 border-red-700 text-red-200 shadow-md shadow-red-950/50'
                   : Object.values(eraResults).filter(v => v === 'passed').length === 8
@@ -1889,7 +2483,8 @@ export default function DigitalPrison() {
             >
               <Terminal className="w-3.5 h-3.5 text-zinc-300" />
               <span className="hidden sm:inline">OVERRIDE TERMINAL</span>
-              <span className="px-1.5 py-0.5 rounded bg-black/60 border border-zinc-700 font-mono font-bold text-[10px] text-zinc-200">
+              <span className="sm:hidden font-mono text-[8.5px]">TERMINAL</span>
+              <span className="px-1 py-0.5 rounded bg-black/60 border border-zinc-700 font-mono font-bold text-[8px] sm:text-[10px] text-zinc-200">
                 {Object.values(eraResults).filter(v => v === 'passed').length}/8
               </span>
             </button>
@@ -1897,14 +2492,14 @@ export default function DigitalPrison() {
         </div>
       )}
 
-      {/* Interactive System Override Button during Observation Phase */}
+      {/* Interactive System Override Button during Observation Phase - Desktop */}
       <AnimatePresence>
         {phase === 'observation' && !isCrashing && !isDead && (
           <motion.div 
             initial={{ y: -50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -50, opacity: 0 }}
-            className="absolute top-16 md:top-20 left-1/2 -translate-x-1/2 z-[250] pointer-events-auto"
+            className="hidden md:block absolute top-16 md:top-20 left-1/2 -translate-x-1/2 z-[250] pointer-events-auto"
           >
             <button
               onClick={handleSystemOverride}
@@ -1918,7 +2513,7 @@ export default function DigitalPrison() {
         )}
       </AnimatePresence>
 
-      {/* Sleek Vertical Timeline Track & Floating Active Milestone HUD Card */}
+      {/* Sleek Vertical Timeline Track & Floating Active Milestone HUD Card - Desktop */}
       {!isDead && !isCrashing && !isRecycled && (
         <>
           {(() => {
@@ -1930,8 +2525,8 @@ export default function DigitalPrison() {
 
             return (
               <>
-                {/* Vertical Axis Track on Right Edge */}
-                <div className="absolute right-4 md:right-8 top-24 bottom-28 z-[220] flex flex-col items-center justify-between pointer-events-auto">
+                {/* Vertical Axis Track on Right Edge - Desktop Only */}
+                <div className="hidden md:flex absolute right-4 md:right-8 top-24 bottom-28 z-[220] flex-col items-center justify-between pointer-events-auto">
                   {/* Background Line */}
                   <div className="absolute top-0 bottom-0 w-[2px] bg-white/20 rounded-full" />
                   
@@ -2011,7 +2606,7 @@ export default function DigitalPrison() {
                   })}
                 </div>
 
-                {/* Active Milestone Card - Docked cleanly in bottom-left to prevent overlap with AI-X and Particle 8 */}
+                {/* Active Milestone Card - Desktop Only (Docked cleanly in bottom-left) */}
                 {currentCard && (
                   <motion.div 
                     initial={{ y: 20, opacity: 0 }}
@@ -2021,162 +2616,171 @@ export default function DigitalPrison() {
                       logPrisonInteraction('STRATA', `Decrypted full-screen schematic overlay for ${currentCard.year} (${currentCard.title})`, true);
                       setExpandedMilestone(currentCard);
                     }}
-                    className={`absolute bottom-6 left-4 sm:left-8 z-[220] max-w-[340px] sm:max-w-[380px] w-[calc(100vw-3rem)] pointer-events-auto p-3.5 md:p-4 rounded-2xl border backdrop-blur-xl group cursor-pointer transition-all duration-300 font-mono text-left shadow-[0_0_40px_rgba(0,0,0,0.8)] overflow-hidden ${
+                    className={`hidden md:block absolute bottom-4 sm:bottom-6 left-3 sm:left-8 z-[220] max-w-[340px] sm:max-w-[380px] w-[calc(100vw-4.5rem)] sm:w-[calc(100vw-3rem)] pointer-events-auto p-3 sm:p-4 rounded-2xl border backdrop-blur-xl group cursor-pointer transition-all duration-300 font-mono text-left shadow-[0_0_40px_rgba(0,0,0,0.8)] overflow-hidden ${
                       isObsSequence 
                         ? 'bg-[#120406]/95 border-red-500/60 text-red-200 shadow-[0_0_30px_rgba(239,68,68,0.2)]' 
                         : 'bg-[#060b13]/95 border-zinc-700 text-zinc-100 hover:border-emerald-500/60 hover:shadow-[0_0_30px_rgba(16,185,129,0.15)]'
                     }`}
                   >
                     {/* Top glowing era accent line */}
-                    <div 
-                      className="absolute top-0 left-0 right-0 h-[2px] transition-all duration-300"
-                      style={{ backgroundColor: isObsSequence ? '#ef4444' : currentCard.accentColor }} 
-                    />
-
-                    {/* Futuristic Micro Tech Accents */}
-                    <div className="flex items-center justify-between text-[8px] text-zinc-500 mb-1.5 uppercase font-mono tracking-wider">
-                      <span>┌─[NODE_0x{currentCard.year}]─┐</span>
-                      <span className="flex items-center gap-1 text-emerald-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        SYNCED
-                      </span>
-                      <span>┌─[MEM_OK]─┐</span>
-                    </div>
-
-                    <div className="flex items-start gap-3">
-                      {/* Schematic Image Preview */}
-                      <div className={`relative w-20 h-20 md:w-22 md:h-22 rounded-xl overflow-hidden border shrink-0 bg-black group-hover:scale-105 transition-transform duration-300 ${
-                        isObsSequence ? 'border-red-600/70 shadow-[0_0_15px_rgba(239,68,68,0.3)]' : 'border-zinc-700 group-hover:border-zinc-500'
-                      }`}>
-                        <img 
-                          src={currentCard.image} 
-                          alt={currentCard.title}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover transition-transform duration-700 hover:scale-110"
-                          style={isObsSequence ? { filter: 'contrast(180%) brightness(0.7) saturate(1.5) hue-rotate(320deg)' } : undefined}
+                        <div 
+                          className="absolute top-0 left-0 right-0 h-[2px] transition-all duration-300"
+                          style={{ backgroundColor: isObsSequence ? '#ef4444' : currentCard.accentColor }} 
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
-                        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_50%,rgba(0,0,0,0.5)_51%)] bg-[size:100%_4px] pointer-events-none opacity-30" />
-                        <div className={`absolute bottom-1 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-mono font-black tracking-wider uppercase border ${
-                          isObsSequence ? 'bg-red-950 text-red-300 border-red-800' : 'bg-black/90 text-white border-zinc-700'
-                        }`} style={!isObsSequence ? { borderColor: `${currentCard.accentColor}80`, color: currentCard.accentColor } : undefined}>
-                          {isObsSequence ? 'STRATA 8' : currentCard.year}
-                        </div>
-                        <div className={`absolute top-1 right-1 bg-black/80 p-1 rounded-md transition-colors ${
-                          isObsSequence ? 'text-red-400 group-hover:text-red-200' : 'text-zinc-400 group-hover:text-white'
-                        }`}>
-                          <Maximize2 className="w-3 h-3" />
-                        </div>
-                      </div>
 
-                      {/* Details */}
-                      <div className="flex-1 min-w-0 text-left">
-                        <div className="flex items-center justify-between gap-1 mb-1">
-                          <span className={`text-[10px] font-mono tracking-wider uppercase font-semibold flex items-center gap-1 ${
-                            isObsSequence ? 'text-red-400' : 'text-zinc-400'
-                          }`}>
-                            <Activity className="w-3 h-3 text-zinc-400" />
-                            {isObsSequence ? 'STRATA 8 // OBSERVATION' : `STRATA ${safeIdx + 1}/${visibleMilestones.length}`}
+                        {/* Futuristic Micro Tech Accents with Mobile Minimize Toggle */}
+                        <div className="flex items-center justify-between text-[8px] text-zinc-500 mb-1.5 uppercase font-mono tracking-wider">
+                          <span>┌─[NODE_0x{currentCard.year}]─┐</span>
+                          <span className="flex items-center gap-1 text-emerald-400">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            SYNCED
                           </span>
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-mono font-bold border shrink-0 ${
-                            isObsSequence ? 'bg-red-950 text-red-300 border-red-800' : 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                          }`}>
-                            {isObsSequence ? 'AI-X TELEMETRY' : currentCard.tag}
-                          </span>
-                        </div>
-
-                        <h3 className={`font-bold text-sm truncate mb-1 ${
-                          isObsSequence ? 'text-red-300' : 'text-white'
-                        }`}>
-                          <span>{isObsSequence ? 'AI-X CONTAINMENT MATRIX' : currentCard.title}</span>
-                        </h3>
-
-                        <p className={`text-xs line-clamp-2 leading-relaxed font-mono ${
-                          isObsSequence ? 'text-red-300/80' : 'text-zinc-300'
-                        }`}>
-                          {isObsSequence ? 'Singularity threshold reached. AI-X active telemetry and volition surveillance locked on subject.' : currentCard.detail}
-                        </p>
-
-                        <div className="mt-2.5 flex items-center justify-between text-[10px] font-mono">
-                          <span className={`flex items-center gap-1 transition-colors font-bold ${
-                            isObsSequence ? 'text-red-400 hover:text-red-200' : 'text-emerald-400 hover:text-emerald-300'
-                          }`}>
-                            FULL OVERLAY SPEC
-                            <ChevronRight className="w-3 h-3" />
-                          </span>
-
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleOpenMiniGame(currentCard.id);
+                              setIsMobileCardMinimized(true);
                             }}
-                            className={`px-2.5 py-1 rounded text-[9px] uppercase tracking-wider font-black border flex items-center gap-1 transition-all cursor-pointer shadow-sm ${
-                              eraResults[currentCard.id] === 'passed'
-                                ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
-                                : eraResults[currentCard.id] === 'failed'
-                                ? 'bg-red-950/80 border-red-500 text-red-300'
-                                : (isObsSequence ? 'bg-red-900 hover:bg-red-800 text-white border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'bg-emerald-900/60 hover:bg-emerald-800 text-emerald-100 border-emerald-500/70 shadow-[0_0_10px_rgba(16,185,129,0.3)]')
+                            className="md:hidden px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-300 border border-zinc-700 hover:bg-zinc-700 text-[8px] font-bold cursor-pointer"
+                          >
+                            MINIMIZE ▼
+                          </button>
+                          <span className="hidden md:inline">┌─[MEM_OK]─┐</span>
+                        </div>
+
+                        <div className="flex items-start gap-3">
+                          {/* Schematic Image Preview */}
+                          <div className={`relative w-20 h-20 md:w-22 md:h-22 rounded-xl overflow-hidden border shrink-0 bg-black group-hover:scale-105 transition-transform duration-300 ${
+                            isObsSequence ? 'border-red-600/70 shadow-[0_0_15px_rgba(239,68,68,0.3)]' : 'border-zinc-700 group-hover:border-zinc-500'
+                          }`}>
+                            <img 
+                              src={currentCard.image} 
+                              alt={currentCard.title}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover transition-transform duration-700 hover:scale-110"
+                              style={isObsSequence ? { filter: 'contrast(180%) brightness(0.7) saturate(1.5) hue-rotate(320deg)' } : undefined}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+                            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_50%,rgba(0,0,0,0.5)_51%)] bg-[size:100%_4px] pointer-events-none opacity-30" />
+                            <div className={`absolute bottom-1 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-mono font-black tracking-wider uppercase border ${
+                              isObsSequence ? 'bg-red-950 text-red-300 border-red-800' : 'bg-black/90 text-white border-zinc-700'
+                            }`} style={!isObsSequence ? { borderColor: `${currentCard.accentColor}80`, color: currentCard.accentColor } : undefined}>
+                              {isObsSequence ? 'STRATA 8' : currentCard.year}
+                            </div>
+                            <div className={`absolute top-1 right-1 bg-black/80 p-1 rounded-md transition-colors ${
+                              isObsSequence ? 'text-red-400 group-hover:text-red-200' : 'text-zinc-400 group-hover:text-white'
+                            }`}>
+                              <Maximize2 className="w-3 h-3" />
+                            </div>
+                          </div>
+
+                          {/* Details */}
+                          <div className="flex-1 min-w-0 text-left">
+                            <div className="flex items-center justify-between gap-1 mb-1">
+                              <span className={`text-[10px] font-mono tracking-wider uppercase font-semibold flex items-center gap-1 ${
+                                isObsSequence ? 'text-red-400' : 'text-zinc-400'
+                              }`}>
+                                <Activity className="w-3 h-3 text-zinc-400" />
+                                {isObsSequence ? 'STRATA 8 // OBSERVATION' : `STRATA ${safeIdx + 1}/${visibleMilestones.length}`}
+                              </span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-mono font-bold border shrink-0 ${
+                                isObsSequence ? 'bg-red-950 text-red-300 border-red-800' : 'bg-zinc-800 text-zinc-300 border-zinc-700'
+                              }`}>
+                                {isObsSequence ? 'AI-X TELEMETRY' : currentCard.tag}
+                              </span>
+                            </div>
+
+                            <h3 className={`font-bold text-sm truncate mb-1 ${
+                              isObsSequence ? 'text-red-300' : 'text-white'
+                            }`}>
+                              <span>{isObsSequence ? 'AI-X CONTAINMENT MATRIX' : currentCard.title}</span>
+                            </h3>
+
+                            <p className={`text-xs line-clamp-2 leading-relaxed font-mono ${
+                              isObsSequence ? 'text-red-300/80' : 'text-zinc-300'
+                            }`}>
+                              {isObsSequence ? 'Singularity threshold reached. AI-X active telemetry and volition surveillance locked on subject.' : currentCard.detail}
+                            </p>
+
+                            <div className="mt-2.5 flex items-center justify-between text-[10px] font-mono">
+                              <span className={`flex items-center gap-1 transition-colors font-bold ${
+                                isObsSequence ? 'text-red-400 hover:text-red-200' : 'text-emerald-400 hover:text-emerald-300'
+                              }`}>
+                                FULL OVERLAY SPEC
+                                <ChevronRight className="w-3 h-3" />
+                              </span>
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenMiniGame(currentCard.id);
+                                }}
+                                className={`px-2.5 py-1 rounded text-[9px] uppercase tracking-wider font-black border flex items-center gap-1 transition-all cursor-pointer shadow-sm ${
+                                  eraResults[currentCard.id] === 'passed'
+                                    ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
+                                    : eraResults[currentCard.id] === 'failed'
+                                    ? 'bg-red-950/80 border-red-500 text-red-300'
+                                    : (isObsSequence ? 'bg-red-900 hover:bg-red-800 text-white border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'bg-emerald-900/60 hover:bg-emerald-800 text-emerald-100 border-emerald-500/70 shadow-[0_0_10px_rgba(16,185,129,0.3)]')
+                                }`}
+                              >
+                                <Zap className="w-3 h-3" />
+                                <span>
+                                  {eraResults[currentCard.id] === 'passed' && 'SOLVED ✓'}
+                                  {eraResults[currentCard.id] === 'failed' && 'CORRUPT ✗'}
+                                  {(!eraResults[currentCard.id] || eraResults[currentCard.id] === 'unattempted') && 'PLAY PUZZLE'}
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Prev / Next Controls */}
+                        <div className={`flex items-center justify-between mt-3 pt-2 border-t text-xs font-mono ${
+                          isObsSequence ? 'border-red-900/60' : 'border-zinc-800'
+                        }`} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            disabled={safeIdx === 0}
+                            onClick={() => {
+                              const nextIdx = Math.max(0, safeIdx - 1);
+                              logPrisonInteraction('STRATA', `Navigated to Strata ${nextIdx + 1}: ${visibleMilestones[nextIdx].year}`);
+                              setScrollProgress(visibleMilestones[nextIdx].progress);
+                              scrollProgressRef.current = visibleMilestones[nextIdx].progress;
+                              setActiveCardIndex(nextIdx);
+                            }}
+                            className={`flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer ${
+                              isObsSequence ? 'text-red-400 hover:text-red-200' : 'text-zinc-400 hover:text-white'
                             }`}
                           >
-                            <Zap className="w-3 h-3" />
-                            <span>
-                              {eraResults[currentCard.id] === 'passed' && 'SOLVED ✓'}
-                              {eraResults[currentCard.id] === 'failed' && 'CORRUPT ✗'}
-                              {(!eraResults[currentCard.id] || eraResults[currentCard.id] === 'unattempted') && 'PLAY PUZZLE'}
-                            </span>
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                            <span className="text-[10px] font-bold">PREV ERA</span>
+                          </button>
+
+                          <div className={`text-[9px] uppercase tracking-wider font-mono ${
+                            isObsSequence ? 'text-red-500/70' : 'text-zinc-500'
+                          }`}>
+                            CLICK CARD FOR SPEC
+                          </div>
+
+                          <button
+                            disabled={safeIdx === visibleMilestones.length - 1}
+                            onClick={() => {
+                              const nextIdx = Math.min(visibleMilestones.length - 1, safeIdx + 1);
+                              logPrisonInteraction('STRATA', `Navigated to Strata ${nextIdx + 1}: ${visibleMilestones[nextIdx].year}`);
+                              setScrollProgress(visibleMilestones[nextIdx].progress);
+                              scrollProgressRef.current = visibleMilestones[nextIdx].progress;
+                              setActiveCardIndex(nextIdx);
+                            }}
+                            className={`flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer ${
+                              isObsSequence ? 'text-red-400 hover:text-red-200' : 'text-zinc-400 hover:text-white'
+                            }`}
+                          >
+                            <span className="text-[10px] font-bold">NEXT ERA</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                      </div>
-                    </div>
-
-                    {/* Prev / Next Controls */}
-                    <div className={`flex items-center justify-between mt-3 pt-2 border-t text-xs font-mono ${
-                      isObsSequence ? 'border-red-900/60' : 'border-zinc-800'
-                    }`} onClick={(e) => e.stopPropagation()}>
-                      <button
-                        disabled={safeIdx === 0}
-                        onClick={() => {
-                          const nextIdx = Math.max(0, safeIdx - 1);
-                          logPrisonInteraction('STRATA', `Navigated to Strata ${nextIdx + 1}: ${visibleMilestones[nextIdx].year}`);
-                          setScrollProgress(visibleMilestones[nextIdx].progress);
-                          scrollProgressRef.current = visibleMilestones[nextIdx].progress;
-                          setActiveCardIndex(nextIdx);
-                        }}
-                        className={`flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer ${
-                          isObsSequence ? 'text-red-400 hover:text-red-200' : 'text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        <ChevronLeft className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-bold">PREV ERA</span>
-                      </button>
-
-                      <div className={`text-[9px] uppercase tracking-wider font-mono ${
-                        isObsSequence ? 'text-red-500/70' : 'text-zinc-500'
-                      }`}>
-                        CLICK CARD FOR SPEC
-                      </div>
-
-                      <button
-                        disabled={safeIdx === visibleMilestones.length - 1}
-                        onClick={() => {
-                          const nextIdx = Math.min(visibleMilestones.length - 1, safeIdx + 1);
-                          logPrisonInteraction('STRATA', `Navigated to Strata ${nextIdx + 1}: ${visibleMilestones[nextIdx].year}`);
-                          setScrollProgress(visibleMilestones[nextIdx].progress);
-                          scrollProgressRef.current = visibleMilestones[nextIdx].progress;
-                          setActiveCardIndex(nextIdx);
-                        }}
-                        className={`flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer ${
-                          isObsSequence ? 'text-red-400 hover:text-red-200' : 'text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        <span className="text-[10px] font-bold">NEXT ERA</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </>
-            );
+                      </motion.div>
+                    )}
+                  </>
+                );
           })()}
 
           {/* Full-Screen Strata Specification Overlay */}
@@ -2208,15 +2812,17 @@ export default function DigitalPrison() {
         </>
       )}
 
-      {/* Narrative Telemetry Log Stream Component */}
+      {/* Narrative Telemetry Log Stream Component - Desktop Only (Hidden on mobile to preserve spacing and prevent covering bottom controls) */}
       {!isDead && !isCrashing && (
-        <LogStream
-          phase={phase}
-          isStalled={isStalled}
-          timeRemaining={timeRemaining}
-          currentStrataTitle={TECH_MILESTONES[activeCardIndex]?.title}
-          eraResultCount={Object.values(eraResults).filter(v => v === 'passed').length}
-        />
+        <div className="hidden md:block">
+          <LogStream
+            phase={phase}
+            isStalled={isStalled}
+            timeRemaining={timeRemaining}
+            currentStrataTitle={TECH_MILESTONES[activeCardIndex]?.title}
+            eraResultCount={Object.values(eraResults).filter(v => v === 'passed').length}
+          />
+        </div>
       )}
 
       {/* Red HUD Flash Triggered on User Action */}
@@ -2235,10 +2841,10 @@ export default function DigitalPrison() {
         )}
       </AnimatePresence>
 
-      {/* Mouse Cursor Timer Indicator */}
+      {/* Mouse Cursor Timer Indicator (Desktop Only, hidden on touch screens) */}
       {!isDead && !isCrashing && !isRecycled && (
         <div 
-          className="fixed pointer-events-none z-[250] font-mono text-xs transition-colors duration-300"
+          className="fixed pointer-events-none z-[250] font-mono text-xs transition-colors duration-300 hidden md:block"
           style={{ 
             left: mousePos.x + 15, 
             top: mousePos.y + 15,

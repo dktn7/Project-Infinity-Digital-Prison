@@ -16,7 +16,7 @@ import {
   Layers
 } from 'lucide-react';
 
-export type LogCategory = 'SYS' | 'AI-X' | 'MEM' | 'WARDEN' | 'ECHO' | 'ALERT' | 'INPUT' | 'STRATA' | 'PUZZLE' | 'TERMINAL' | 'OVERRIDE';
+export type LogCategory = 'SYS' | 'AI-X' | 'MEM' | 'WARDEN' | 'ECHO' | 'ALERT' | 'INPUT' | 'STRATA' | 'PUZZLE' | 'TERMINAL' | 'OVERRIDE' | 'FOCAL';
 
 export interface LogEntry {
   id: string;
