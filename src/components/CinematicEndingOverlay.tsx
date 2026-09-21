@@ -389,7 +389,7 @@ export const CinematicEndingOverlay: React.FC<CinematicEndingOverlayProps> = ({
         </div>
 
         {/* Outcome Simulator Switcher for testing/viewing all animation sequences */}
-        <div className="flex items-center gap-1 bg-zinc-950/90 p-1 rounded-xl border border-zinc-800 text-xs font-mono">
+        <div className="flex items-center gap-1 bg-zinc-950/90 p-1 rounded-xl border border-zinc-800 text-xs font-mono overflow-x-auto max-w-full no-scrollbar">
           <span className="text-[10px] text-zinc-400 px-2 uppercase font-bold hidden md:inline">TEST OUTCOME:</span>
           {(['escape', 'recycled', 'archived', 'inaction'] as EndingOutcome[]).map((key) => {
             const def = ENDING_DEFINITIONS[key];
@@ -402,7 +402,7 @@ export const CinematicEndingOverlay: React.FC<CinematicEndingOverlayProps> = ({
                   setCurrentOutcome(key);
                   if (onOutcomeChange) onOutcomeChange(key);
                 }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer ${
+                className={`px-2 py-1 sm:px-2.5 rounded-lg text-[9px] sm:text-[10px] font-bold uppercase transition-all cursor-pointer whitespace-nowrap ${
                   isSelected 
                     ? 'bg-zinc-800 border' 
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
@@ -472,41 +472,41 @@ export const CinematicEndingOverlay: React.FC<CinematicEndingOverlayProps> = ({
           </p>
         </div>
 
-        {/* Tab Selector */}
-        <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2 border-b border-zinc-800 pb-2 text-xs">
+        {/* Streamlined Mobile/Desktop Tab Selector */}
+        <div className="grid grid-cols-3 gap-1 sm:gap-2 border-b border-zinc-800 pb-2 text-[11px] sm:text-xs">
           <button
             onClick={() => setActiveTab('monologue')}
-            className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`px-2 sm:px-4 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 ${
               activeTab === 'monologue'
                 ? 'bg-zinc-800 text-white border border-zinc-600'
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <Terminal className="w-4 h-4" />
-            <span className="truncate">VOICE MONOLOGUE</span>
+            <Terminal className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="truncate">MONOLOGUE</span>
           </button>
 
           <button
             onClick={() => setActiveTab('dossier')}
-            className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`px-2 sm:px-4 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 ${
               activeTab === 'dossier'
                 ? 'bg-zinc-800 text-white border border-zinc-600'
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <FileText className="w-4 h-4" />
+            <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
             <span className="truncate">DOSSIER</span>
           </button>
 
           <button
             onClick={() => setActiveTab('telemetry')}
-            className={`w-full sm:w-auto px-3 sm:px-4 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`px-2 sm:px-4 py-2 rounded-lg font-bold uppercase transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 ${
               activeTab === 'telemetry'
                 ? 'bg-zinc-800 text-white border border-zinc-600'
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <Database className="w-4 h-4" />
+            <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
             <span className="truncate">TELEMETRY ({solvedCount}/8)</span>
           </button>
         </div>
