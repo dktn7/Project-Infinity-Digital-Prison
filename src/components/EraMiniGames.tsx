@@ -296,6 +296,7 @@ export const EraMiniGameModal: React.FC<MiniGameModalProps> = ({
   const [timeLeft, setTimeLeft] = useState(60); // 60s global terminal pressure timer
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [showTacticalHint, setShowTacticalHint] = useState(false);
+  const usesEnvironmentalPressure = milestoneId === 'm1';
 
   const theme = ERA_THEMES[milestoneId] || ERA_THEMES.m1;
 
@@ -321,7 +322,7 @@ export const EraMiniGameModal: React.FC<MiniGameModalProps> = ({
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [gameState]);
+  }, [gameState, usesEnvironmentalPressure]);
 
   const toggleSound = () => {
     const next = !soundEnabled;
